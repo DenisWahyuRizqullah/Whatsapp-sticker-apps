@@ -61,7 +61,7 @@ class StickerRepository(
         val existingStickers = packDir.listFiles { f ->
             f.extension.equals("webp", ignoreCase = true) &&
                 f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
+        }?.sortedWith(compareBy({ it.lastModified() }, { it.name })).orEmpty()
 
         // ponytail: prevent saving duplicate if exact same sticker already exists in pack
         val isDuplicate = existingStickers.any { existing ->
@@ -72,14 +72,19 @@ class StickerRepository(
             return@withContext existingStickers.size
         }
 
-        val nextIdx = (existingStickers.size + 1).coerceAtMost(30)
-        val userStickerFile = File(packDir, String.format("user_sticker_%02d.webp", nextIdx))
+        if (existingStickers.size >= 30) {
+            return@withContext existingStickers.size
+        }
+
+        // ponytail: generate unique, immutable filename so deleting or adding stickers never desynchronizes Coil cache or Compose keys
+        val stickerFileName = "user_sticker_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(6)}.webp"
+        val userStickerFile = File(packDir, stickerFileName)
         stickerOutput.file.copyTo(userStickerFile, overwrite = true)
 
         // WhatsApp requires at least 3 stickers in a pack. Populate filler slots if user has < 3 stickers.
         val allUserStickers = packDir.listFiles { f ->
             f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
+        }?.sortedWith(compareBy({ it.lastModified() }, { it.name })).orEmpty()
 
         // Remove old auto-fillers first
         packDir.listFiles { f -> f.name.startsWith("autofill_sticker_") }?.forEach { it.delete() }
@@ -112,7 +117,7 @@ class StickerRepository(
         if (!packDir.exists()) return@withContext emptyList()
         packDir.listFiles { f ->
             f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
+        }?.sortedWith(compareBy({ it.lastModified() }, { it.name })).orEmpty()
     }
 
     suspend fun deleteStickerFromLocalPack(
@@ -122,6 +127,8 @@ class StickerRepository(
         val packDir = File(context.filesDir, "sticker_packs/$packId")
         if (!packDir.exists()) return@withContext emptyList()
 
+        // ponytail: delete the target file directly without renaming remaining files.
+        // Keeping filenames immutable prevents Coil cache collision and Compose key desync.
         if (targetFile.exists()) {
             targetFile.delete()
         }
@@ -129,32 +136,18 @@ class StickerRepository(
         // Get remaining user stickers
         val remainingUserStickers = packDir.listFiles { f ->
             f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
-
-        // Temporarily move to avoid naming collisions when reindexing
-        val tempFiles = remainingUserStickers.mapIndexed { index, file ->
-            val temp = File(packDir, "tmp_reindex_${index}_${System.currentTimeMillis()}.webp")
-            file.renameTo(temp)
-            temp
-        }
-
-        // Reindex user stickers sequentially: user_sticker_01.webp, user_sticker_02.webp, ...
-        val reindexed = tempFiles.mapIndexed { index, tempFile ->
-            val dest = File(packDir, String.format("user_sticker_%02d.webp", index + 1))
-            tempFile.renameTo(dest)
-            dest
-        }
+        }?.sortedWith(compareBy({ it.lastModified() }, { it.name })).orEmpty()
 
         // Remove old auto-fillers first
         packDir.listFiles { f -> f.name.startsWith("autofill_sticker_") }?.forEach { it.delete() }
 
-        if (reindexed.isNotEmpty()) {
-            updateTrayIconFromSticker(packDir, reindexed.first())
+        if (remainingUserStickers.isNotEmpty()) {
+            updateTrayIconFromSticker(packDir, remainingUserStickers.first())
             // WhatsApp requires at least 3 stickers in a pack. Populate filler slots if < 3.
-            if (reindexed.size < 3) {
-                for (slot in (reindexed.size + 1)..3) {
+            if (remainingUserStickers.size < 3) {
+                for (slot in (remainingUserStickers.size + 1)..3) {
                     val filler = File(packDir, String.format("autofill_sticker_%02d.webp", slot))
-                    reindexed.first().copyTo(filler, overwrite = true)
+                    remainingUserStickers.first().copyTo(filler, overwrite = true)
                 }
             }
         } else {
@@ -173,7 +166,7 @@ class StickerRepository(
             context.contentResolver.notifyChange(Uri.parse("content://$authority/stickers/$packId"), null)
         } catch (_: Exception) {}
 
-        reindexed
+        remainingUserStickers
     }
 
     private fun updateTrayIconFromSticker(packDir: File, stickerFile: File) {

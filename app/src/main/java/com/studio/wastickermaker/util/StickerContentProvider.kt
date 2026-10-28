@@ -129,7 +129,7 @@ class StickerContentProvider : ContentProvider() {
         val packDir = File(context?.filesDir, "sticker_packs/$packId")
         val webpFiles = packDir.listFiles { file ->
             file.isFile && file.extension.equals("webp", ignoreCase = true) && file.name != "tray_icon.webp"
-        }?.sortedWith(compareBy({ !it.name.startsWith("user_sticker_") }, { it.name })).orEmpty()
+        }?.sortedWith(compareBy({ !it.name.startsWith("user_sticker_") }, { it.lastModified() }, { it.name })).orEmpty()
 
         val cursor = MatrixCursor(
             arrayOf(

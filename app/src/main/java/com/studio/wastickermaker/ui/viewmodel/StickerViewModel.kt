@@ -53,10 +53,15 @@ class StickerViewModel(
         viewModelScope.launch {
             try {
                 val updated = repository.deleteStickerFromLocalPack(file)
+                val currentPreview = _screenState.value.previewFile
+                val isCurrentStillInPack = currentPreview != null && updated.any {
+                    it.length() == currentPreview.length() && it.readBytes().contentEquals(currentPreview.readBytes())
+                }
                 _screenState.update { state ->
                     state.copy(
                         packStickers = updated,
-                        savedPackCount = updated.size
+                        savedPackCount = updated.size,
+                        isCurrentStickerSaved = if (!isCurrentStillInPack) false else state.isCurrentStickerSaved
                     )
                 }
             } catch (t: Throwable) {

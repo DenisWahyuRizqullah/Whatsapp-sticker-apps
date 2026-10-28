@@ -627,7 +627,7 @@ fun StickerMakerScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        items(screenState.packStickers, key = { it.absolutePath }) { file ->
+                        items(screenState.packStickers, key = { it.name }) { file ->
                             Box(
                                 modifier = Modifier
                                     .size(90.dp)
@@ -643,6 +643,7 @@ fun StickerMakerScreen(
                                 AsyncImage(
                                     model = ImageRequest.Builder(context)
                                         .data(file)
+                                        .memoryCacheKey("${file.absolutePath}_${file.lastModified()}")
                                         .build(),
                                     imageLoader = coilImageLoader,
                                     contentDescription = "Collection Sticker",
