@@ -29,5 +29,7 @@ data class StickerScreenState(
     val selectedMedia: SelectedMediaInfo? = null,
     val conversionState: StickerUiState = StickerUiState.Idle,
     val savedPackCount: Int = 0,
-    val packStickers: List<File> = emptyList()
+    val packStickers: List<File> = emptyList(),
+    val previewFile: File? = null,
+    val isCurrentStickerSaved: Boolean = false
 )

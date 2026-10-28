@@ -63,6 +63,15 @@ class StickerRepository(
                 f.name.startsWith("user_sticker_")
         }?.sortedBy { it.name }.orEmpty()
 
+        // ponytail: prevent saving duplicate if exact same sticker already exists in pack
+        val isDuplicate = existingStickers.any { existing ->
+            existing.length() == stickerOutput.file.length() &&
+                existing.readBytes().contentEquals(stickerOutput.file.readBytes())
+        }
+        if (isDuplicate) {
+            return@withContext existingStickers.size
+        }
+
         val nextIdx = (existingStickers.size + 1).coerceAtMost(30)
         val userStickerFile = File(packDir, String.format("user_sticker_%02d.webp", nextIdx))
         stickerOutput.file.copyTo(userStickerFile, overwrite = true)

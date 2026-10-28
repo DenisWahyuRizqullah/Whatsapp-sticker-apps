@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
@@ -377,85 +378,115 @@ fun StickerMakerScreen(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    when (val uiState = screenState.conversionState) {
-                        is StickerUiState.Idle -> {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.padding(24.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.AddPhotoAlternate,
-                                    contentDescription = null,
-                                    tint = AiryCobaltTokens.LightAxisGrey,
-                                    modifier = Modifier.size(36.dp)
-                                )
-                                Text(
-                                    text = "Your sticker will appear here",
-                                    color = AiryCobaltTokens.MutedCoolGrey,
-                                    fontSize = 13.sp,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
+                    val previewFile = screenState.previewFile
+                    if (previewFile != null && previewFile.exists()) {
+                        // Always keep preview image rendered to prevent blinking/flickering
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(previewFile)
+                                .build(),
+                            imageLoader = coilImageLoader,
+                            contentDescription = "Sticker Preview",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
 
-                        is StickerUiState.Processing -> {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.padding(24.dp)
+                        // If background debounce conversion is actively processing, show a subtle progress indicator overlay
+                        if (screenState.conversionState is StickerUiState.Processing) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.25f)),
+                                contentAlignment = Alignment.Center
                             ) {
                                 CircularProgressIndicator(
                                     color = AiryCobaltTokens.CobaltPrimary,
-                                    strokeWidth = 3.dp
-                                )
-                                LinearProgressIndicator(
-                                    progress = { uiState.progress },
-                                    color = AiryCobaltTokens.CobaltPrimary,
-                                    trackColor = AiryCobaltTokens.PeriwinkleSoft,
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.75f)
-                                        .height(6.dp)
-                                        .clip(CircleShape)
-                                )
-                                Text(
-                                    text = uiState.stageMessage,
-                                    color = AiryCobaltTokens.DeepSlateHeading,
-                                    fontSize = 12.sp
+                                    strokeWidth = 3.dp,
+                                    modifier = Modifier.size(36.dp)
                                 )
                             }
                         }
+                    } else {
+                        when (val uiState = screenState.conversionState) {
+                            is StickerUiState.Idle -> {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.AddPhotoAlternate,
+                                        contentDescription = null,
+                                        tint = AiryCobaltTokens.LightAxisGrey,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Text(
+                                        text = "Your sticker will appear here",
+                                        color = AiryCobaltTokens.MutedCoolGrey,
+                                        fontSize = 13.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
 
-                        is StickerUiState.Success -> {
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(uiState.stickerOutput.file)
-                                    .build(),
-                                imageLoader = coilImageLoader,
-                                contentDescription = "Sticker Preview",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
+                            is StickerUiState.Processing -> {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.padding(24.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = AiryCobaltTokens.CobaltPrimary,
+                                        strokeWidth = 3.dp
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { uiState.progress },
+                                        color = AiryCobaltTokens.CobaltPrimary,
+                                        trackColor = AiryCobaltTokens.PeriwinkleSoft,
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.75f)
+                                            .height(6.dp)
+                                            .clip(CircleShape)
+                                    )
+                                    Text(
+                                        text = uiState.stageMessage,
+                                        color = AiryCobaltTokens.DeepSlateHeading,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
 
-                        is StickerUiState.Error -> {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.padding(20.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = AiryCobaltTokens.CoralAlert,
-                                    modifier = Modifier.size(36.dp)
+                            is StickerUiState.Success -> {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(context)
+                                        .data(uiState.stickerOutput.file)
+                                        .build(),
+                                    imageLoader = coilImageLoader,
+                                    contentDescription = "Sticker Preview",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize()
                                 )
-                                Text(
-                                    text = uiState.message,
-                                    color = AiryCobaltTokens.DeepSlateHeading,
-                                    fontSize = 13.sp,
-                                    textAlign = TextAlign.Center
-                                )
+                            }
+
+                            is StickerUiState.Error -> {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(20.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.ErrorOutline,
+                                        contentDescription = null,
+                                        tint = AiryCobaltTokens.CoralAlert,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Text(
+                                        text = uiState.message,
+                                        color = AiryCobaltTokens.DeepSlateHeading,
+                                        fontSize = 13.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             }
                         }
                     }
@@ -465,7 +496,57 @@ fun StickerMakerScreen(
                 if (screenState.conversionState is StickerUiState.Success) {
                     val output = (screenState.conversionState as StickerUiState.Success).stickerOutput
 
-                    Button(
+                    // Primary Button: Simpan ke Koleksi Stiker
+                    if (!screenState.isCurrentStickerSaved) {
+                        Button(
+                            onClick = {
+                                viewModel.saveCurrentStickerToPack()
+                                Toast.makeText(context, "Stiker berhasil disimpan ke koleksi!", Toast.LENGTH_SHORT).show()
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AiryCobaltTokens.CobaltPrimary,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                        ) {
+                            Icon(Icons.Outlined.BookmarkAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "+ Simpan ke Koleksi Stiker",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { },
+                            enabled = false,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                tint = AiryCobaltTokens.EmeraldPositive,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Tersimpan di Koleksi ✓",
+                                color = AiryCobaltTokens.EmeraldPositive,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    // Secondary Button: Tambahkan Koleksi ke WhatsApp
+                    OutlinedButton(
                         onClick = {
                             try {
                                 val intent = WhatsAppShareHelper.createAddStickerPackIntent(context)
@@ -475,39 +556,14 @@ fun StickerMakerScreen(
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = AiryCobaltTokens.CobaltPrimary,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                    ) {
-                        Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Tambahkan Koleksi ke WhatsApp",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            WhatsAppShareHelper.shareSingleStickerToWhatsApp(
-                                context = context,
-                                webpFile = output.file
-                            )
-                        },
-                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
                     ) {
-                        Icon(Icons.Outlined.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Bagikan File via Chat (Foto)",
+                            text = "Tambahkan Koleksi (${screenState.packStickers.size}) ke WhatsApp",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
                         )

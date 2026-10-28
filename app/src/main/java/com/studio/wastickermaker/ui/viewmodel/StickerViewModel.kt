@@ -29,6 +29,7 @@ class StickerViewModel(
     val screenState: StateFlow<StickerScreenState> = _screenState.asStateFlow()
 
     private var activeConversionJob: Job? = null
+    private var textDebounceJob: Job? = null
 
     init {
         loadLocalPack()
@@ -122,9 +123,16 @@ class StickerViewModel(
         val current = _screenState.value.selectedMedia ?: return
         if (current.stickerText == text) return
         _screenState.update { state ->
-            state.copy(selectedMedia = current.copy(stickerText = text))
+            state.copy(
+                selectedMedia = current.copy(stickerText = text),
+                isCurrentStickerSaved = false
+            )
         }
-        convertSelectedMedia()
+        textDebounceJob?.cancel()
+        textDebounceJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350L) // ponytail: debounce typing to eliminate photo flickering
+            convertSelectedMedia()
+        }
     }
 
     fun onVideoTrimRangeChanged(startMs: Long, endMs: Long) {
@@ -154,9 +162,41 @@ class StickerViewModel(
     fun onScaleFitModeChanged(fitMode: ScaleFitMode) {
         val current = _screenState.value.selectedMedia ?: return
         _screenState.update { state ->
-            state.copy(selectedMedia = current.copy(fitMode = fitMode))
+            state.copy(
+                selectedMedia = current.copy(fitMode = fitMode),
+                isCurrentStickerSaved = false
+            )
         }
         convertSelectedMedia()
+    }
+
+    fun saveCurrentStickerToPack() {
+        val currentConversion = _screenState.value.conversionState
+        if (currentConversion !is StickerUiState.Success) return
+        if (_screenState.value.isCurrentStickerSaved) return
+
+        viewModelScope.launch {
+            try {
+                val packCount = repository.addStickerToLocalPack(currentConversion.stickerOutput)
+                val packList = repository.getLocalPackStickers()
+                _screenState.update { state ->
+                    state.copy(
+                        packStickers = packList,
+                        savedPackCount = packCount,
+                        isCurrentStickerSaved = true
+                    )
+                }
+            } catch (t: Throwable) {
+                _screenState.update { state ->
+                    state.copy(
+                        conversionState = StickerUiState.Error(
+                            title = "Gagal Menyimpan",
+                            message = t.localizedMessage ?: "Tidak dapat menyimpan stiker."
+                        )
+                    )
+                }
+            }
+        }
     }
 
     fun convertSelectedMedia() {
@@ -200,17 +240,15 @@ class StickerViewModel(
                     }
                 }
 
-                val packCount = repository.addStickerToLocalPack(output)
-                val packList = repository.getLocalPackStickers()
-
+                // ponytail: preview only; committed to pack only when user explicitly saves
                 _screenState.update { state ->
                     state.copy(
                         conversionState = StickerUiState.Success(
                             stickerOutput = output,
-                            packStickerCount = packCount
+                            packStickerCount = state.packStickers.size
                         ),
-                        savedPackCount = packCount,
-                        packStickers = packList
+                        previewFile = output.file,
+                        isCurrentStickerSaved = false
                     )
                 }
             } catch (e: StickerConversionException) {
@@ -239,10 +277,13 @@ class StickerViewModel(
 
     fun resetState() {
         activeConversionJob?.cancel()
+        textDebounceJob?.cancel()
         _screenState.update {
             it.copy(
                 selectedMedia = null,
-                conversionState = StickerUiState.Idle
+                conversionState = StickerUiState.Idle,
+                previewFile = null,
+                isCurrentStickerSaved = false
             )
         }
     }
