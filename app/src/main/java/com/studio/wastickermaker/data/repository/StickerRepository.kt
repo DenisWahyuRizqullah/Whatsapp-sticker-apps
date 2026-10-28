@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
+import com.studio.wastickermaker.BuildConfig
 import com.studio.wastickermaker.data.model.SelectedMediaInfo
 import com.studio.wastickermaker.data.model.StickerOutput
 import com.studio.wastickermaker.util.StickerContentProvider
@@ -86,7 +87,84 @@ class StickerRepository(
         val nextVersion = (versionFile.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 1) + 1
         versionFile.writeText(nextVersion.toString())
 
+        try {
+            val authority = BuildConfig.CONTENT_PROVIDER_AUTHORITY
+            context.contentResolver.notifyChange(Uri.parse("content://$authority/metadata"), null)
+            context.contentResolver.notifyChange(Uri.parse("content://$authority/stickers/$packId"), null)
+        } catch (_: Exception) {}
+
         allUserStickers.size
+    }
+
+    suspend fun getLocalPackStickers(
+        packId: String = StickerContentProvider.DEFAULT_PACK_ID
+    ): List<File> = withContext(Dispatchers.IO) {
+        val packDir = File(context.filesDir, "sticker_packs/$packId")
+        if (!packDir.exists()) return@withContext emptyList()
+        packDir.listFiles { f ->
+            f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
+        }?.sortedBy { it.name }.orEmpty()
+    }
+
+    suspend fun deleteStickerFromLocalPack(
+        targetFile: File,
+        packId: String = StickerContentProvider.DEFAULT_PACK_ID
+    ): List<File> = withContext(Dispatchers.IO) {
+        val packDir = File(context.filesDir, "sticker_packs/$packId")
+        if (!packDir.exists()) return@withContext emptyList()
+
+        if (targetFile.exists()) {
+            targetFile.delete()
+        }
+
+        // Get remaining user stickers
+        val remainingUserStickers = packDir.listFiles { f ->
+            f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
+        }?.sortedBy { it.name }.orEmpty()
+
+        // Temporarily move to avoid naming collisions when reindexing
+        val tempFiles = remainingUserStickers.mapIndexed { index, file ->
+            val temp = File(packDir, "tmp_reindex_${index}_${System.currentTimeMillis()}.webp")
+            file.renameTo(temp)
+            temp
+        }
+
+        // Reindex user stickers sequentially: user_sticker_01.webp, user_sticker_02.webp, ...
+        val reindexed = tempFiles.mapIndexed { index, tempFile ->
+            val dest = File(packDir, String.format("user_sticker_%02d.webp", index + 1))
+            tempFile.renameTo(dest)
+            dest
+        }
+
+        // Remove old auto-fillers first
+        packDir.listFiles { f -> f.name.startsWith("autofill_sticker_") }?.forEach { it.delete() }
+
+        if (reindexed.isNotEmpty()) {
+            updateTrayIconFromSticker(packDir, reindexed.first())
+            // WhatsApp requires at least 3 stickers in a pack. Populate filler slots if < 3.
+            if (reindexed.size < 3) {
+                for (slot in (reindexed.size + 1)..3) {
+                    val filler = File(packDir, String.format("autofill_sticker_%02d.webp", slot))
+                    reindexed.first().copyTo(filler, overwrite = true)
+                }
+            }
+        } else {
+            File(packDir, "tray_icon.webp").delete()
+            File(packDir, "pack_type.txt").delete()
+        }
+
+        // Increment pack image_data_version so WhatsApp refreshes cache
+        val versionFile = File(packDir, "version.txt")
+        val nextVersion = (versionFile.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 1) + 1
+        versionFile.writeText(nextVersion.toString())
+
+        try {
+            val authority = BuildConfig.CONTENT_PROVIDER_AUTHORITY
+            context.contentResolver.notifyChange(Uri.parse("content://$authority/metadata"), null)
+            context.contentResolver.notifyChange(Uri.parse("content://$authority/stickers/$packId"), null)
+        } catch (_: Exception) {}
+
+        reindexed
     }
 
     private fun updateTrayIconFromSticker(packDir: File, stickerFile: File) {

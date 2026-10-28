@@ -2,6 +2,7 @@ package com.studio.wastickermaker.ui.state
 
 import com.studio.wastickermaker.data.model.SelectedMediaInfo
 import com.studio.wastickermaker.data.model.StickerOutput
+import java.io.File
 
 sealed interface StickerUiState {
     data object Idle : StickerUiState
@@ -27,5 +28,6 @@ sealed interface StickerUiState {
 data class StickerScreenState(
     val selectedMedia: SelectedMediaInfo? = null,
     val conversionState: StickerUiState = StickerUiState.Idle,
-    val savedPackCount: Int = 0
+    val savedPackCount: Int = 0,
+    val packStickers: List<File> = emptyList()
 )

@@ -11,6 +11,7 @@ import com.studio.wastickermaker.ui.state.StickerScreenState
 import com.studio.wastickermaker.ui.state.StickerUiState
 import com.studio.wastickermaker.util.StickerConversionException
 import com.studio.wastickermaker.util.StickerConverter
+import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +29,47 @@ class StickerViewModel(
     val screenState: StateFlow<StickerScreenState> = _screenState.asStateFlow()
 
     private var activeConversionJob: Job? = null
+
+    init {
+        loadLocalPack()
+    }
+
+    fun loadLocalPack() {
+        viewModelScope.launch {
+            try {
+                val stickers = repository.getLocalPackStickers()
+                _screenState.update { state ->
+                    state.copy(
+                        packStickers = stickers,
+                        savedPackCount = stickers.size
+                    )
+                }
+            } catch (_: Throwable) {}
+        }
+    }
+
+    fun deleteSticker(file: File) {
+        viewModelScope.launch {
+            try {
+                val updated = repository.deleteStickerFromLocalPack(file)
+                _screenState.update { state ->
+                    state.copy(
+                        packStickers = updated,
+                        savedPackCount = updated.size
+                    )
+                }
+            } catch (t: Throwable) {
+                _screenState.update { state ->
+                    state.copy(
+                        conversionState = StickerUiState.Error(
+                            title = "Gagal Menghapus Stiker",
+                            message = t.localizedMessage ?: "Tidak dapat menghapus stiker."
+                        )
+                    )
+                }
+            }
+        }
+    }
 
     fun onMediaUriSelected(uri: Uri?) {
         if (uri == null) return
@@ -159,6 +201,7 @@ class StickerViewModel(
                 }
 
                 val packCount = repository.addStickerToLocalPack(output)
+                val packList = repository.getLocalPackStickers()
 
                 _screenState.update { state ->
                     state.copy(
@@ -166,7 +209,8 @@ class StickerViewModel(
                             stickerOutput = output,
                             packStickerCount = packCount
                         ),
-                        savedPackCount = packCount
+                        savedPackCount = packCount,
+                        packStickers = packList
                     )
                 }
             } catch (e: StickerConversionException) {

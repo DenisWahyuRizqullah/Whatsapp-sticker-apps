@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +32,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Collections
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.Refresh
@@ -463,10 +467,12 @@ fun StickerMakerScreen(
 
                     Button(
                         onClick = {
-                            WhatsAppShareHelper.shareSingleStickerToWhatsApp(
-                                context = context,
-                                webpFile = output.file
-                            )
+                            try {
+                                val intent = WhatsAppShareHelper.createAddStickerPackIntent(context)
+                                addStickerPackLauncher.launch(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -477,16 +483,142 @@ fun StickerMakerScreen(
                             .fillMaxWidth()
                             .height(52.dp)
                     ) {
-                        Icon(Icons.Outlined.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Kirim Stiker Satuan ke WhatsApp",
+                            text = "Tambahkan Koleksi ke WhatsApp",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
 
                     OutlinedButton(
+                        onClick = {
+                            WhatsAppShareHelper.shareSingleStickerToWhatsApp(
+                                context = context,
+                                webpFile = output.file
+                            )
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(Icons.Outlined.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Bagikan File via Chat (Foto)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            // Step 4: My Sticker Collection & Management Card
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .frostedBentoCard(24.dp)
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Collections,
+                            contentDescription = null,
+                            tint = AiryCobaltTokens.CobaltPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Koleksi Stiker Saya",
+                            color = AiryCobaltTokens.SlateCardTitle,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = AiryCobaltTokens.PeriwinkleSoft
+                    ) {
+                        Text(
+                            text = "${screenState.packStickers.size} Stiker",
+                            color = AiryCobaltTokens.CobaltDeep,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Kelola stiker yang telah dibuat. Stiker di koleksi ini otomatis masuk ke keyboard WhatsApp.",
+                    color = AiryCobaltTokens.MutedCoolGrey,
+                    fontSize = 12.sp
+                )
+
+                if (screenState.packStickers.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(screenState.packStickers, key = { it.absolutePath }) { file ->
+                            Box(
+                                modifier = Modifier
+                                    .size(90.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.White.copy(alpha = 0.8f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = AiryCobaltTokens.PeriwinkleSoft,
+                                        shape = RoundedCornerShape(16.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(context)
+                                        .data(file)
+                                        .build(),
+                                    imageLoader = coilImageLoader,
+                                    contentDescription = "Collection Sticker",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(6.dp)
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        viewModel.deleteSticker(file)
+                                        Toast.makeText(context, "Stiker dihapus dari koleksi.", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .size(22.dp)
+                                        .background(AiryCobaltTokens.CoralAlert, CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = "Hapus",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Button(
                         onClick = {
                             try {
                                 val intent = WhatsAppShareHelper.createAddStickerPackIntent(context)
@@ -496,16 +628,36 @@ fun StickerMakerScreen(
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AiryCobaltTokens.CobaltPrimary,
+                            contentColor = Color.White
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .height(50.dp)
                     ) {
                         Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Tambahkan ke Keyboard WhatsApp (Pack)",
+                            text = "Tambahkan Koleksi (${screenState.packStickers.size}) ke WhatsApp",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White.copy(alpha = 0.5f))
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Belum ada stiker di koleksi.\nBuat stiker pertamamu di atas!",
+                            color = AiryCobaltTokens.MutedCoolGrey,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
