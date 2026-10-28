@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sticker Maker</string>
+    <string name="pick_media">Choose Photo, GIF, or Video</string>
+    <string name="send_to_whatsapp">Send to WhatsApp</string>
+    <string name="add_pack_to_whatsapp">Add Pack to WhatsApp</string>
+</resources>

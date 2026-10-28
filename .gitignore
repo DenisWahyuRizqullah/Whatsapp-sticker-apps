@@ -1,0 +1,18 @@
+# Gradle and build output
+.gradle/
+build/
+app/build/
+.cxx/
+
+# Local Android environment & machine paths
+local.properties
+
+# Signing keys & secrets
+*.jks
+*.keystore
+google-services.json
+
+# IDE
+.idea/
+*.iml
+.kotlin/
