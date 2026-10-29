@@ -3,6 +3,7 @@ package com.studio.wastickermaker
 import com.studio.wastickermaker.data.model.AppLanguage
 import com.studio.wastickermaker.data.model.AppSettings
 import com.studio.wastickermaker.ui.theme.AppStrings
+import com.studio.wastickermaker.util.StickerConverter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -206,5 +207,16 @@ class StickerCollectionLogicTest {
         val enStrings = AppStrings.forLanguage(AppLanguage.ENGLISH)
         assertEquals("Pengaturan", idStrings.settingsTitle)
         assertEquals("Settings", enStrings.settingsTitle)
+    }
+
+    @Test
+    fun testExifJsonPayloadEscapesQuotesAndBackslashes() {
+        val json = StickerConverter.buildExifJsonPayload(
+            packId = "pack_01",
+            packName = "My \"Pack\"",
+            publisher = "Denis \"Dev\" \\ Studio\nLine2"
+        )
+        assertTrue(json.contains("\"sticker-pack-publisher\":\"Denis \\\"Dev\\\" \\\\ Studio\\nLine2\""))
+        assertTrue(json.contains("\"sticker-pack-name\":\"My \\\"Pack\\\"\""))
     }
 }

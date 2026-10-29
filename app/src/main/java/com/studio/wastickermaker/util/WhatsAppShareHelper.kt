@@ -26,13 +26,12 @@ object WhatsAppShareHelper {
         context: Context,
         packIdentifier: String = StickerContentProvider.STATIC_PACK_ID,
         packName: String = StickerContentProvider.STATIC_PACK_NAME,
-        whatsAppTarget: WhatsAppTarget = WhatsAppTarget.AUTO
+        whatsAppTarget: WhatsAppTarget = WhatsAppTarget.CONSUMER
     ): Intent {
-        val targetPackage = when (whatsAppTarget) {
-            WhatsAppTarget.CONSUMER -> resolveInstalledWhatsAppPackage(context, preferBusiness = false)
-            WhatsAppTarget.BUSINESS -> resolveInstalledWhatsAppPackage(context, preferBusiness = true)
-            WhatsAppTarget.AUTO -> resolveInstalledWhatsAppPackage(context, preferBusiness = false)
-        }
+        val targetPackage = resolveInstalledWhatsAppPackage(
+            context = context,
+            preferBusiness = whatsAppTarget == WhatsAppTarget.BUSINESS
+        )
         return Intent(ACTION_ENABLE_STICKER_PACK).apply {
             putExtra(EXTRA_STICKER_PACK_ID, packIdentifier)
             putExtra(EXTRA_STICKER_PACK_AUTHORITY, BuildConfig.CONTENT_PROVIDER_AUTHORITY)

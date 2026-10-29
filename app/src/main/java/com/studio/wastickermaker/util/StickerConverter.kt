@@ -61,6 +61,27 @@ class StickerConverter(private val context: Context) {
         const val MAX_VIDEO_TRIM_DURATION_MS = 6_000L      // 6 seconds max trim
         const val MIN_VIDEO_TRIM_DURATION_MS = 500L        // 0.5 seconds min trim
         private const val STICKER_CACHE_FOLDER = "stickers"
+
+        internal fun escapeJsonString(raw: String): String = buildString(raw.length) {
+            for (ch in raw) {
+                when (ch) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> if (ch.code >= 0x20) append(ch)
+                }
+            }
+        }
+
+        internal fun buildExifJsonPayload(
+            packId: String,
+            packName: String,
+            publisher: String
+        ): String {
+            return "{\"sticker-pack-id\":\"${escapeJsonString(packId)}\",\"sticker-pack-name\":\"${escapeJsonString(packName)}\",\"sticker-pack-publisher\":\"${escapeJsonString(publisher)}\",\"emojis\":[\"😀\"]}"
+        }
     }
 
     private data class AnimatedEncodingProfile(
@@ -451,7 +472,7 @@ class StickerConverter(private val context: Context) {
         val webpHeader = String(webpBytes, 8, 4, StandardCharsets.US_ASCII)
         if (riffHeader != "RIFF" || webpHeader != "WEBP") return webpBytes
 
-        val jsonPayload = "{\"sticker-pack-id\":\"$packId\",\"sticker-pack-name\":\"$packName\",\"sticker-pack-publisher\":\"$publisher\",\"emojis\":[\"😀\"]}"
+        val jsonPayload = buildExifJsonPayload(packId, packName, publisher)
         val jsonBytes = jsonPayload.toByteArray(StandardCharsets.UTF_8)
 
         // Minimal TIFF/EXIF header wrapping the WhatsApp JSON string in tag 0x5741 ("WA")
@@ -864,11 +885,15 @@ class StickerConverter(private val context: Context) {
         return File(stickerDir, "${prefix}_${System.currentTimeMillis()}.webp")
     }
 
-    fun clearPreviewCache(): Long {
+    fun clearPreviewCache(keepFile: File? = null): Long {
         val stickerDir = File(context.cacheDir, STICKER_CACHE_FOLDER)
         if (!stickerDir.exists()) return 0L
+        val keepPath = keepFile?.canonicalPath
         var freedBytes = 0L
         stickerDir.listFiles()?.forEach { file ->
+            if (keepPath != null && runCatching { file.canonicalPath == keepPath }.getOrDefault(false)) {
+                return@forEach
+            }
             val len = file.length()
             if (file.delete()) {
                 freedBytes += len

@@ -15,7 +15,6 @@ enum class AppThemeMode(val labelId: String, val labelEn: String) {
 }
 
 enum class WhatsAppTarget(val labelId: String, val labelEn: String) {
-    AUTO("Otomatis", "Auto"),
     CONSUMER("WhatsApp", "WhatsApp"),
     BUSINESS("WA Business", "WA Business");
 
@@ -29,7 +28,7 @@ data class AppSettings(
     val maxAnimatedDurationSec: Int = 6,
     val themeMode: AppThemeMode = AppThemeMode.LIGHT,
     val defaultFitMode: ScaleFitMode = ScaleFitMode.CENTER_CROP,
-    val whatsAppTarget: WhatsAppTarget = WhatsAppTarget.AUTO,
+    val whatsAppTarget: WhatsAppTarget = WhatsAppTarget.CONSUMER,
     val customPublisher: String = "Sticker Maker"
 ) {
     val maxAnimatedDurationMs: Long

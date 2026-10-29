@@ -74,8 +74,8 @@ class StickerRepository(
         return converter.convertToStickerOutput(mediaInfo, settings, onProgress)
     }
 
-    suspend fun clearPreviewCache(): Long = withContext(Dispatchers.IO) {
-        converter.clearPreviewCache()
+    suspend fun clearPreviewCache(keepFile: File? = null): Long = withContext(Dispatchers.IO) {
+        converter.clearPreviewCache(keepFile)
     }
 
     suspend fun addStickerToLocalPack(

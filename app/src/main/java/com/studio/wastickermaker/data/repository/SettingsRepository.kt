@@ -15,7 +15,7 @@ class SettingsRepository(context: Context) {
         val langName = prefs.getString(KEY_LANGUAGE, AppLanguage.INDONESIAN.name)
         val themeName = prefs.getString(KEY_THEME_MODE, AppThemeMode.LIGHT.name)
         val fitName = prefs.getString(KEY_DEFAULT_FIT_MODE, ScaleFitMode.CENTER_CROP.name)
-        val waTargetName = prefs.getString(KEY_WA_TARGET, WhatsAppTarget.AUTO.name)
+        val waTargetName = prefs.getString(KEY_WA_TARGET, WhatsAppTarget.CONSUMER.name)
 
         return AppSettings(
             language = runCatching { AppLanguage.valueOf(langName!!) }.getOrDefault(AppLanguage.INDONESIAN),
@@ -23,7 +23,7 @@ class SettingsRepository(context: Context) {
             maxAnimatedDurationSec = prefs.getInt(KEY_MAX_DURATION_SEC, 6).coerceIn(2, 10),
             themeMode = runCatching { AppThemeMode.valueOf(themeName!!) }.getOrDefault(AppThemeMode.LIGHT),
             defaultFitMode = runCatching { ScaleFitMode.valueOf(fitName!!) }.getOrDefault(ScaleFitMode.CENTER_CROP),
-            whatsAppTarget = runCatching { WhatsAppTarget.valueOf(waTargetName!!) }.getOrDefault(WhatsAppTarget.AUTO),
+            whatsAppTarget = runCatching { WhatsAppTarget.valueOf(waTargetName!!) }.getOrDefault(WhatsAppTarget.CONSUMER),
             customPublisher = prefs.getString(KEY_CUSTOM_PUBLISHER, "Sticker Maker") ?: "Sticker Maker"
         )
     }

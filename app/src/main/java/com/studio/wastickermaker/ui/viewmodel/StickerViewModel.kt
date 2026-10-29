@@ -42,7 +42,6 @@ class StickerViewModel(
 
     private var activeConversionJob: Job? = null
     private var textDebounceJob: Job? = null
-    private var publisherDebounceJob: Job? = null
 
     init {
         loadLocalPacks()
@@ -111,9 +110,6 @@ class StickerViewModel(
 
     fun onDefaultFitModeChanged(fitMode: ScaleFitMode) {
         updateSettings { it.copy(defaultFitMode = fitMode) }
-        if (_screenState.value.selectedMedia != null) {
-            onScaleFitModeChanged(fitMode)
-        }
     }
 
     fun onWhatsAppTargetChanged(target: WhatsAppTarget) {
@@ -121,32 +117,21 @@ class StickerViewModel(
     }
 
     fun onCustomPublisherChanged(publisher: String) {
-        val sanitized = publisher.take(36)
-        updateSettings { it.copy(customPublisher = sanitized) }
-        if (_screenState.value.selectedMedia != null) {
-            publisherDebounceJob?.cancel()
-            publisherDebounceJob = viewModelScope.launch {
-                delay(450L)
-                _screenState.update { it.copy(isCurrentStickerSaved = false) }
-                convertSelectedMedia()
-            }
-        }
+        updateSettings { it.copy(customPublisher = publisher.take(36)) }
     }
 
     fun clearPreviewCache(onCleared: (String) -> Unit) {
         viewModelScope.launch {
-            val freedBytes = repository.clearPreviewCache()
+            val freedBytes = repository.clearPreviewCache(keepFile = _screenState.value.previewFile)
             val freedKb = String.format(Locale.US, "%.1f", freedBytes / 1024.0)
             onCleared(freedKb)
         }
     }
 
     private fun updateSettings(transform: (AppSettings) -> AppSettings) {
-        _screenState.update { state ->
-            val updated = transform(state.settings)
-            settingsRepository.saveSettings(updated)
-            state.copy(settings = updated)
-        }
+        val updated = transform(_screenState.value.settings)
+        _screenState.update { it.copy(settings = updated) }
+        settingsRepository.saveSettings(updated)
     }
 
     fun onSegmentSelected(segment: StickerPackSegment) {
@@ -434,7 +419,6 @@ class StickerViewModel(
     fun resetState() {
         activeConversionJob?.cancel()
         textDebounceJob?.cancel()
-        publisherDebounceJob?.cancel()
         _screenState.update {
             it.copy(
                 selectedMedia = null,
