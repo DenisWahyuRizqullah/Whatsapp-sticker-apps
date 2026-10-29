@@ -11,10 +11,6 @@
         <package android:name="com.whatsapp.w4b" />
 
         <intent>
-            <action android:name="android.intent.action.SEND" />
-            <data android:mimeType="image/webp" />
-        </intent>
-        <intent>
             <action android:name="com.whatsapp.intent.action.ENABLE_STICKER_PACK" />
         </intent>
     </queries>

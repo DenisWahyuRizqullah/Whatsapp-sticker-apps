@@ -82,6 +82,117 @@ class StickerConverter(private val context: Context) {
         ): String {
             return "{\"sticker-pack-id\":\"${escapeJsonString(packId)}\",\"sticker-pack-name\":\"${escapeJsonString(packName)}\",\"sticker-pack-publisher\":\"${escapeJsonString(publisher)}\",\"emojis\":[\"😀\"]}"
         }
+
+        internal fun computeSafeTrimRange(
+            totalDurationMs: Long,
+            startMs: Long,
+            endMs: Long,
+            maxDurationMs: Long = MAX_VIDEO_TRIM_DURATION_MS
+        ): Pair<Long, Long> {
+            val safeStart = startMs.coerceIn(0L, totalDurationMs)
+            val minEnd = (safeStart + MIN_VIDEO_TRIM_DURATION_MS).coerceAtMost(totalDurationMs)
+            var safeEnd = endMs.coerceIn(minEnd, totalDurationMs)
+            if (safeEnd - safeStart > maxDurationMs) {
+                safeEnd = (safeStart + maxDurationMs).coerceAtMost(totalDurationMs)
+            }
+            return safeStart to safeEnd
+        }
+
+        internal fun wrapText(text: String, maxCharsPerLine: Int): List<String> {
+            val result = mutableListOf<String>()
+            val paragraphs = text.trim().split("\n")
+            for (paragraph in paragraphs) {
+                val words = paragraph.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+                if (words.isEmpty()) continue
+                var currentLine = StringBuilder()
+                for (word in words) {
+                    if (currentLine.isEmpty()) {
+                        currentLine.append(word)
+                    } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
+                        currentLine.append(" ").append(word)
+                    } else {
+                        result.add(currentLine.toString())
+                        currentLine = StringBuilder(word)
+                    }
+                }
+                if (currentLine.isNotEmpty()) {
+                    result.add(currentLine.toString())
+                }
+            }
+            return result.take(5)
+        }
+
+        internal fun buildAnimatedWebpFromSingleFrame(
+            singleFrameWebp: ByteArray,
+            frameDurationMs: Int = 100,
+            frameCount: Int = 2
+        ): ByteArray {
+            val frameSubchunks = ByteArrayOutputStream()
+            var offset = 12
+            while (offset + 8 <= singleFrameWebp.size) {
+                val fourCC = String(singleFrameWebp, offset, 4, StandardCharsets.US_ASCII)
+                val chunkSize = ByteBuffer.wrap(singleFrameWebp, offset + 4, 4)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                    .int
+                if (chunkSize < 0) break
+                val paddedDataSize = chunkSize + (chunkSize and 1)
+                val totalChunkBytes = (8 + paddedDataSize).coerceAtMost(singleFrameWebp.size - offset)
+                if (fourCC == "ALPH" || fourCC == "VP8 " || fourCC == "VP8L") {
+                    frameSubchunks.write(singleFrameWebp, offset, totalChunkBytes)
+                }
+                offset += totalChunkBytes
+            }
+            val subchunkBytes = frameSubchunks.toByteArray()
+            val anmfPayloadSize = 16 + subchunkBytes.size
+            val anmfHeader = byteArrayOf(
+                0, 0, 0,                   // Frame X = 0
+                0, 0, 0,                   // Frame Y = 0
+                0xFF.toByte(), 0x01, 0x00, // Width - 1 = 511
+                0xFF.toByte(), 0x01, 0x00, // Height - 1 = 511
+                (frameDurationMs and 0xFF).toByte(),
+                ((frameDurationMs shr 8) and 0xFF).toByte(),
+                ((frameDurationMs shr 16) and 0xFF).toByte(),
+                0x02                       // Blending = do not blend (bit 1), Disposal = do not dispose (bit 0)
+            )
+            val anmfSizeBytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(anmfPayloadSize).array()
+
+            val bodyStream = ByteArrayOutputStream()
+            bodyStream.write(
+                byteArrayOf(
+                    'V'.code.toByte(), 'P'.code.toByte(), '8'.code.toByte(), 'X'.code.toByte(),
+                    10, 0, 0, 0,
+                    0x12, 0, 0, 0,
+                    0xFF.toByte(), 0x01, 0x00,
+                    0xFF.toByte(), 0x01, 0x00
+                )
+            )
+            bodyStream.write(
+                byteArrayOf(
+                    'A'.code.toByte(), 'N'.code.toByte(), 'I'.code.toByte(), 'M'.code.toByte(),
+                    6, 0, 0, 0,
+                    0, 0, 0, 0,
+                    0, 0
+                )
+            )
+            repeat(frameCount.coerceAtLeast(2)) {
+                bodyStream.write("ANMF".toByteArray(StandardCharsets.US_ASCII))
+                bodyStream.write(anmfSizeBytes)
+                bodyStream.write(anmfHeader)
+                bodyStream.write(subchunkBytes)
+                if (anmfPayloadSize % 2 == 1) {
+                    bodyStream.write(0)
+                }
+            }
+
+            val webpBody = bodyStream.toByteArray()
+            val riffSize = 4 + webpBody.size
+            val out = ByteArrayOutputStream(8 + riffSize)
+            out.write("RIFF".toByteArray(StandardCharsets.US_ASCII))
+            out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(riffSize).array())
+            out.write("WEBP".toByteArray(StandardCharsets.US_ASCII))
+            out.write(webpBody)
+            return out.toByteArray()
+        }
     }
 
     private data class AnimatedEncodingProfile(
@@ -261,64 +372,18 @@ class StickerConverter(private val context: Context) {
         val tempInputFile = copyUriToTempFile(uri, "input_video.mp4")
 
         try {
-            val outputFile = createOutputWebpFile("sticker_video")
             val startSeconds = String.format(Locale.US, "%.3f", startMs / 1000.0)
             val durationSeconds = String.format(Locale.US, "%.3f", clipDurationMs / 1000.0)
-            val clampedRes = resolutionPercent.coerceIn(50, 100)
-
-            for ((index, profile) in animatedProfiles.withIndex()) {
-                onProgress(
-                    0.20f + (index * 0.15f),
-                    "Creating animated sticker (${profile.fps} FPS)..."
-                )
-
-                val scaledQuality = ((profile.quality * clampedRes) / 100).coerceAtLeast(18)
-                val scaleFilter = build512ScaleFilter(profile.fps, fitMode, clampedRes)
-                val command = buildString {
-                    append("-y ")
-                    append("-ss $startSeconds ")
-                    append("-t $durationSeconds ")
-                    append("-i \"${tempInputFile.absolutePath}\" ")
-                    append("-vf \"$scaleFilter\" ")
-                    append("-vcodec libwebp ")
-                    append("-lossless 0 ")
-                    append("-compression_level ${profile.compressionLevel} ")
-                    append("-q:v $scaledQuality ")
-                    append("-loop 0 ")
-                    append("-preset default ")
-                    append("-an -vsync 0 ")
-                    append("\"${outputFile.absolutePath}\"")
-                }
-
-                executeFfmpegCommand(
-                    command = command,
-                    totalDurationMs = clipDurationMs,
-                    onProgress = { passProgress ->
-                        val base = 0.20f + (index * 0.15f)
-                        val mapped = (base + passProgress * 0.65f).coerceAtMost(0.95f)
-                        onProgress(mapped, "Converting video to sticker...")
-                    }
-                )
-
-                if (outputFile.exists() && outputFile.length() in 1..(MAX_ANIMATED_SIZE_BYTES - 512)) {
-                    val withExif = injectWhatsAppExifChunk(
-                        webpBytes = outputFile.readBytes(),
-                        packId = StickerContentProvider.ANIMATED_PACK_ID,
-                        packName = StickerContentProvider.ANIMATED_PACK_NAME,
-                        publisher = publisher
-                    )
-                    if (withExif.size <= MAX_ANIMATED_SIZE_BYTES) {
-                        outputFile.writeBytes(withExif)
-                        onProgress(1.0f, "Animated sticker ready!")
-                        return@withContext outputFile
-                    }
-                }
-            }
-
-            if (outputFile.exists()) outputFile.delete()
-            throw StickerConversionException(
-                message = "Video is too complex to fit under 500 KB. Try trimming a shorter clip (2–4 seconds).",
-                isSizeLimitError = true
+            encodeAnimatedWebp(
+                tempInputFile = tempInputFile,
+                outputPrefix = "sticker_video",
+                timingArgs = "-ss $startSeconds -t $durationSeconds",
+                totalDurationMs = clipDurationMs,
+                fitMode = fitMode,
+                resolutionPercent = resolutionPercent,
+                publisher = publisher,
+                sizeLimitErrorMessage = "Video is too complex to fit under 500 KB. Try trimming a shorter clip (2–4 seconds).",
+                onProgress = onProgress
             )
         } finally {
             if (tempInputFile.exists()) tempInputFile.delete()
@@ -340,65 +405,90 @@ class StickerConverter(private val context: Context) {
         val tempInputFile = copyUriToTempFile(uri, "input_anim.gif")
 
         try {
-            val outputFile = createOutputWebpFile("sticker_gif")
             val safeDurationSec = maxDurationSec.coerceIn(2, 10)
-            val clampedRes = resolutionPercent.coerceIn(50, 100)
-
-            for ((index, profile) in animatedProfiles.withIndex()) {
-                onProgress(
-                    0.25f + (index * 0.15f),
-                    "Optimizing animated GIF (${profile.fps} FPS)..."
-                )
-
-                val scaledQuality = ((profile.quality * clampedRes) / 100).coerceAtLeast(18)
-                val scaleFilter = build512ScaleFilter(profile.fps, fitMode, clampedRes)
-                val command = buildString {
-                    append("-y ")
-                    append("-t ${safeDurationSec}.0 ")
-                    append("-i \"${tempInputFile.absolutePath}\" ")
-                    append("-vf \"$scaleFilter\" ")
-                    append("-vcodec libwebp ")
-                    append("-lossless 0 ")
-                    append("-compression_level ${profile.compressionLevel} ")
-                    append("-q:v $scaledQuality ")
-                    append("-loop 0 ")
-                    append("-preset default ")
-                    append("-an -vsync 0 ")
-                    append("\"${outputFile.absolutePath}\"")
-                }
-
-                executeFfmpegCommand(
-                    command = command,
-                    totalDurationMs = safeDurationSec * 1_000L,
-                    onProgress = { passProgress ->
-                        val mapped = (0.25f + passProgress * 0.65f).coerceAtMost(0.95f)
-                        onProgress(mapped, "Converting GIF to sticker...")
-                    }
-                )
-
-                if (outputFile.exists() && outputFile.length() in 1..(MAX_ANIMATED_SIZE_BYTES - 512)) {
-                    val withExif = injectWhatsAppExifChunk(
-                        webpBytes = outputFile.readBytes(),
-                        packId = StickerContentProvider.ANIMATED_PACK_ID,
-                        packName = StickerContentProvider.ANIMATED_PACK_NAME,
-                        publisher = publisher
-                    )
-                    if (withExif.size <= MAX_ANIMATED_SIZE_BYTES) {
-                        outputFile.writeBytes(withExif)
-                        onProgress(1.0f, "Animated sticker ready!")
-                        return@withContext outputFile
-                    }
-                }
-            }
-
-            if (outputFile.exists()) outputFile.delete()
-            throw StickerConversionException(
-                message = "GIF exceeds WhatsApp's 500 KB animated sticker limit.",
-                isSizeLimitError = true
+            encodeAnimatedWebp(
+                tempInputFile = tempInputFile,
+                outputPrefix = "sticker_gif",
+                timingArgs = "-t ${safeDurationSec}.0",
+                totalDurationMs = safeDurationSec * 1_000L,
+                fitMode = fitMode,
+                resolutionPercent = resolutionPercent,
+                publisher = publisher,
+                sizeLimitErrorMessage = "GIF exceeds WhatsApp's 500 KB animated sticker limit.",
+                onProgress = onProgress
             )
         } finally {
             if (tempInputFile.exists()) tempInputFile.delete()
         }
+    }
+
+    private suspend fun encodeAnimatedWebp(
+        tempInputFile: File,
+        outputPrefix: String,
+        timingArgs: String,
+        totalDurationMs: Long,
+        fitMode: ScaleFitMode,
+        resolutionPercent: Int,
+        publisher: String,
+        sizeLimitErrorMessage: String,
+        onProgress: (Float, String) -> Unit
+    ): File {
+        val outputFile = createOutputWebpFile(outputPrefix)
+        val clampedRes = resolutionPercent.coerceIn(50, 100)
+
+        for ((index, profile) in animatedProfiles.withIndex()) {
+            onProgress(
+                0.20f + (index * 0.15f),
+                "Creating animated sticker (${profile.fps} FPS)..."
+            )
+
+            val scaledQuality = ((profile.quality * clampedRes) / 100).coerceAtLeast(18)
+            val scaleFilter = build512ScaleFilter(profile.fps, fitMode, clampedRes)
+            val command = buildString {
+                append("-y ")
+                append("$timingArgs ")
+                append("-i \"${tempInputFile.absolutePath}\" ")
+                append("-vf \"$scaleFilter\" ")
+                append("-vcodec libwebp ")
+                append("-lossless 0 ")
+                append("-compression_level ${profile.compressionLevel} ")
+                append("-q:v $scaledQuality ")
+                append("-loop 0 ")
+                append("-preset default ")
+                append("-an -vsync 0 ")
+                append("\"${outputFile.absolutePath}\"")
+            }
+
+            executeFfmpegCommand(
+                command = command,
+                totalDurationMs = totalDurationMs,
+                onProgress = { passProgress ->
+                    val base = 0.20f + (index * 0.15f)
+                    val mapped = (base + passProgress * 0.65f).coerceAtMost(0.95f)
+                    onProgress(mapped, "Converting animated sticker...")
+                }
+            )
+
+            if (outputFile.exists() && outputFile.length() in 1..(MAX_ANIMATED_SIZE_BYTES - 512)) {
+                val withExif = injectWhatsAppExifChunk(
+                    webpBytes = outputFile.readBytes(),
+                    packId = StickerContentProvider.ANIMATED_PACK_ID,
+                    packName = StickerContentProvider.ANIMATED_PACK_NAME,
+                    publisher = publisher
+                )
+                if (withExif.size <= MAX_ANIMATED_SIZE_BYTES) {
+                    outputFile.writeBytes(withExif)
+                    onProgress(1.0f, "Animated sticker ready!")
+                    return outputFile
+                }
+            }
+        }
+
+        if (outputFile.exists()) outputFile.delete()
+        throw StickerConversionException(
+            message = sizeLimitErrorMessage,
+            isSizeLimitError = true
+        )
     }
 
     suspend fun convertToStickerOutput(
@@ -463,8 +553,8 @@ class StickerConverter(private val context: Context) {
      */
     fun injectWhatsAppExifChunk(
         webpBytes: ByteArray,
-        packId: String = StickerContentProvider.DEFAULT_PACK_ID,
-        packName: String = StickerContentProvider.DEFAULT_PACK_NAME,
+        packId: String = StickerContentProvider.STATIC_PACK_ID,
+        packName: String = StickerContentProvider.STATIC_PACK_NAME,
         publisher: String = StickerContentProvider.DEFAULT_PACK_PUBLISHER
     ): ByteArray {
         if (webpBytes.size < 16) return webpBytes
@@ -561,80 +651,6 @@ class StickerConverter(private val context: Context) {
             rawStaticWebp
         }
         return injectWhatsAppExifChunk(baseWebp, packId = packId, packName = packName)
-    }
-
-    internal fun buildAnimatedWebpFromSingleFrame(
-        singleFrameWebp: ByteArray,
-        frameDurationMs: Int = 100,
-        frameCount: Int = 2
-    ): ByteArray {
-        val frameSubchunks = ByteArrayOutputStream()
-        var offset = 12
-        while (offset + 8 <= singleFrameWebp.size) {
-            val fourCC = String(singleFrameWebp, offset, 4, StandardCharsets.US_ASCII)
-            val chunkSize = ByteBuffer.wrap(singleFrameWebp, offset + 4, 4)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .int
-            if (chunkSize < 0) break
-            val paddedDataSize = chunkSize + (chunkSize and 1)
-            val totalChunkBytes = (8 + paddedDataSize).coerceAtMost(singleFrameWebp.size - offset)
-            if (fourCC == "ALPH" || fourCC == "VP8 " || fourCC == "VP8L") {
-                frameSubchunks.write(singleFrameWebp, offset, totalChunkBytes)
-            }
-            offset += totalChunkBytes
-        }
-        val subchunkBytes = frameSubchunks.toByteArray()
-        val anmfPayloadSize = 16 + subchunkBytes.size
-        val anmfHeader = byteArrayOf(
-            0, 0, 0,                   // Frame X = 0
-            0, 0, 0,                   // Frame Y = 0
-            0xFF.toByte(), 0x01, 0x00, // Width - 1 = 511
-            0xFF.toByte(), 0x01, 0x00, // Height - 1 = 511
-            (frameDurationMs and 0xFF).toByte(),
-            ((frameDurationMs shr 8) and 0xFF).toByte(),
-            ((frameDurationMs shr 16) and 0xFF).toByte(),
-            0x02                       // Blending = do not blend (bit 1), Disposal = do not dispose (bit 0)
-        )
-        val anmfSizeBytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(anmfPayloadSize).array()
-
-        val bodyStream = ByteArrayOutputStream()
-        // VP8X chunk with Alpha (0x10) | Animation (0x02) flags
-        bodyStream.write(
-            byteArrayOf(
-                'V'.code.toByte(), 'P'.code.toByte(), '8'.code.toByte(), 'X'.code.toByte(),
-                10, 0, 0, 0,
-                0x12, 0, 0, 0,
-                0xFF.toByte(), 0x01, 0x00,
-                0xFF.toByte(), 0x01, 0x00
-            )
-        )
-        // ANIM chunk: transparent background (0,0,0,0) and infinite loop (0)
-        bodyStream.write(
-            byteArrayOf(
-                'A'.code.toByte(), 'N'.code.toByte(), 'I'.code.toByte(), 'M'.code.toByte(),
-                6, 0, 0, 0,
-                0, 0, 0, 0,
-                0, 0
-            )
-        )
-        repeat(frameCount.coerceAtLeast(2)) {
-            bodyStream.write("ANMF".toByteArray(StandardCharsets.US_ASCII))
-            bodyStream.write(anmfSizeBytes)
-            bodyStream.write(anmfHeader)
-            bodyStream.write(subchunkBytes)
-            if (anmfPayloadSize % 2 == 1) {
-                bodyStream.write(0)
-            }
-        }
-
-        val webpBody = bodyStream.toByteArray()
-        val riffSize = 4 + webpBody.size
-        val out = ByteArrayOutputStream(8 + riffSize)
-        out.write("RIFF".toByteArray(StandardCharsets.US_ASCII))
-        out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(riffSize).array())
-        out.write("WEBP".toByteArray(StandardCharsets.US_ASCII))
-        out.write(webpBody)
-        return out.toByteArray()
     }
 
     private fun build512ScaleFilter(
@@ -809,30 +825,6 @@ class StickerConverter(private val context: Context) {
             canvas.drawText(line, centerX, y, strokePaint)
             canvas.drawText(line, centerX, y, fillPaint)
         }
-    }
-
-    private fun wrapText(text: String, maxCharsPerLine: Int): List<String> {
-        val result = mutableListOf<String>()
-        val paragraphs = text.trim().split("\n")
-        for (paragraph in paragraphs) {
-            val words = paragraph.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
-            if (words.isEmpty()) continue
-            var currentLine = StringBuilder()
-            for (word in words) {
-                if (currentLine.isEmpty()) {
-                    currentLine.append(word)
-                } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
-                    currentLine.append(" ").append(word)
-                } else {
-                    result.add(currentLine.toString())
-                    currentLine = StringBuilder(word)
-                }
-            }
-            if (currentLine.isNotEmpty()) {
-                result.add(currentLine.toString())
-            }
-        }
-        return result.take(5)
     }
 
     private fun extractVideoDurationMs(uri: Uri): Long {

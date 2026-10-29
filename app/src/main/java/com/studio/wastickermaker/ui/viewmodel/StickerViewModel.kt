@@ -18,6 +18,7 @@ import com.studio.wastickermaker.ui.state.StickerUiState
 import com.studio.wastickermaker.ui.theme.AppStrings
 import com.studio.wastickermaker.util.StickerContentProvider
 import com.studio.wastickermaker.util.StickerConversionException
+import com.studio.wastickermaker.util.StickerConverter
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Job
@@ -135,16 +136,10 @@ class StickerViewModel(
     }
 
     fun onSegmentSelected(segment: StickerPackSegment) {
-        _screenState.update { state ->
-            val preview = state.previewFile
-            val targetList = if (segment == StickerPackSegment.STATIC) state.staticPackStickers else state.animatedPackStickers
-            val isCurrentSaved = preview != null && preview.exists() && targetList.any {
-                it.length() == preview.length() && it.readBytes().contentEquals(preview.readBytes())
-            }
-            state.copy(
-                selectedSegment = segment,
-                isCurrentStickerSaved = isCurrentSaved
-            )
+        _screenState.update { it.copy(selectedSegment = segment) }
+        viewModelScope.launch {
+            val isSaved = repository.isStickerInPack(_screenState.value.previewFile, segment.packId)
+            _screenState.update { it.copy(isCurrentStickerSaved = isSaved) }
         }
     }
 
@@ -157,10 +152,7 @@ class StickerViewModel(
             try {
                 val currentSegment = _screenState.value.selectedSegment
                 val updated = repository.deleteStickerFromLocalPack(file, currentSegment.packId)
-                val currentPreview = _screenState.value.previewFile
-                val isCurrentStillInPack = currentPreview != null && currentPreview.exists() && updated.any {
-                    it.length() == currentPreview.length() && it.readBytes().contentEquals(currentPreview.readBytes())
-                }
+                val isCurrentStillInPack = repository.isStickerInPack(_screenState.value.previewFile, currentSegment.packId)
                 _screenState.update { state ->
                     if (currentSegment == StickerPackSegment.STATIC) {
                         state.copy(
@@ -269,13 +261,12 @@ class StickerViewModel(
         if (current.inputType != MediaInputType.VIDEO) return
         val maxDurationMs = _screenState.value.settings.maxAnimatedDurationMs
 
-        val safeStart = startMs.coerceIn(0L, current.totalDurationMs)
-        val minEnd = (safeStart + 500L).coerceAtMost(current.totalDurationMs)
-        var safeEnd = endMs.coerceIn(minEnd, current.totalDurationMs)
-
-        if (safeEnd - safeStart > maxDurationMs) {
-            safeEnd = (safeStart + maxDurationMs).coerceAtMost(current.totalDurationMs)
-        }
+        val (safeStart, safeEnd) = StickerConverter.computeSafeTrimRange(
+            totalDurationMs = current.totalDurationMs,
+            startMs = startMs,
+            endMs = endMs,
+            maxDurationMs = maxDurationMs
+        )
 
         _screenState.update { state ->
             state.copy(
@@ -384,10 +375,7 @@ class StickerViewModel(
 
                 _screenState.update { state ->
                     state.copy(
-                        conversionState = StickerUiState.Success(
-                            stickerOutput = output,
-                            packStickerCount = state.packStickers.size
-                        ),
+                        conversionState = StickerUiState.Success(stickerOutput = output),
                         previewFile = output.file,
                         isCurrentStickerSaved = false
                     )

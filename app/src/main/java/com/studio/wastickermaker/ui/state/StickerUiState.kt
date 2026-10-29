@@ -14,8 +14,7 @@ sealed interface StickerUiState {
     ) : StickerUiState
 
     data class Success(
-        val stickerOutput: StickerOutput,
-        val packStickerCount: Int = 0
+        val stickerOutput: StickerOutput
     ) : StickerUiState
 
     data class Error(
@@ -45,7 +44,4 @@ data class StickerScreenState(
 ) {
     val packStickers: List<File>
         get() = if (selectedSegment == StickerPackSegment.STATIC) staticPackStickers else animatedPackStickers
-
-    val savedPackCount: Int
-        get() = packStickers.size
 }

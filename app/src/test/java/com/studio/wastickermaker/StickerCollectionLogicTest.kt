@@ -2,19 +2,23 @@ package com.studio.wastickermaker
 
 import com.studio.wastickermaker.data.model.AppLanguage
 import com.studio.wastickermaker.data.model.AppSettings
+import com.studio.wastickermaker.data.repository.StickerRepository
 import com.studio.wastickermaker.ui.theme.AppStrings
 import com.studio.wastickermaker.util.StickerConverter
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.File
 
 /**
- * Unit test verifying that sticker collection deletion targets the exact specified file
- * without renaming other files, segments are isolated, and text wraps properly.
+ * Unit tests verifying production pack filler synchronization, deletion, word-wrapping,
+ * animated WebP RIFF container construction, and EXIF JSON escaping.
  */
 class StickerCollectionLogicTest {
 
@@ -22,169 +26,96 @@ class StickerCollectionLogicTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun testDeleteTargetStickerDeletesExactFileWithoutRenamingOthers() {
+    fun testDeleteTargetStickerDeletesExactFileAndUpdatesFillersViaRepository() {
         val packDir = tempFolder.newFolder("pack")
+        val transparentBytes = "TRANSPARENT_FILLER".toByteArray()
 
-        // Simulate 3 user stickers with immutable filenames
         val stickerA = File(packDir, "user_sticker_1001_aaa.webp").apply { writeText("data_A") }
         val stickerB = File(packDir, "user_sticker_1002_bbb.webp").apply { writeText("data_B") }
         val stickerC = File(packDir, "user_sticker_1003_ccc.webp").apply { writeText("data_C") }
 
-        val initialList = packDir.listFiles { f ->
-            f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
+        val (initialUsers, _) = StickerRepository.syncPackFillersInDirectory(packDir, transparentBytes)
+        assertEquals(3, initialUsers.size)
+        assertFalse(File(packDir, "autofill_sticker_03.webp").exists())
 
-        assertEquals(3, initialList.size)
-        assertEquals("user_sticker_1001_aaa.webp", initialList[0].name)
-        assertEquals("user_sticker_1002_bbb.webp", initialList[1].name)
-        assertEquals("user_sticker_1003_ccc.webp", initialList[2].name)
+        // Delete Sticker A and run production syncPackFillersInDirectory
+        assertTrue(stickerA.delete())
+        val (remaining, changed) = StickerRepository.syncPackFillersInDirectory(packDir, transparentBytes)
 
-        // User deletes Sticker A
-        val targetToDelete = stickerA
-        if (targetToDelete.exists()) {
-            targetToDelete.delete()
-        }
-
-        val remaining = packDir.listFiles { f ->
-            f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
-
-        // Sticker A is gone
-        assertFalse(stickerA.exists())
+        assertTrue(changed)
         assertEquals(2, remaining.size)
-
-        // Crucial: Sticker B and C keep their exact filenames and content!
-        assertTrue(stickerB.exists())
         assertEquals("user_sticker_1002_bbb.webp", remaining[0].name)
-        assertEquals("data_B", remaining[0].readText())
-
-        assertTrue(stickerC.exists())
         assertEquals("user_sticker_1003_ccc.webp", remaining[1].name)
-        assertEquals("data_C", remaining[1].readText())
+        // With 2 user stickers, slot 3 filler must exist and slots 1-2 must not
+        assertFalse(File(packDir, "autofill_sticker_02.webp").exists())
+        assertTrue(File(packDir, "autofill_sticker_03.webp").exists())
     }
 
     @Test
-    fun testAutoFillUsesTransparentPlaceholderInsteadOfDuplicatingUserSticker() {
+    fun testSyncPackFillersReplacesLegacyDuplicateWithTransparentPlaceholder() {
         val packDir = tempFolder.newFolder("pack_autofill")
         val transparentFillerBytes = "TRANSPARENT_PLACEHOLDER_WEBP".toByteArray()
 
-        // 1 user sticker
         val stickerA = File(packDir, "user_sticker_2001_aaa.webp").apply { writeText("USER_VISIBLE_STICKER_A") }
-
-        // Simulate legacy duplicate autofill on disk from old bug
         File(packDir, "autofill_sticker_02.webp").writeText("USER_VISIBLE_STICKER_A")
         File(packDir, "autofill_sticker_03.webp").writeText("USER_VISIBLE_STICKER_A")
 
-        val userStickers = packDir.listFiles { f ->
-            f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
-        }?.sortedBy { it.name }.orEmpty()
+        val (userStickers, changed) = StickerRepository.syncPackFillersInDirectory(packDir, transparentFillerBytes)
+        assertEquals(1, userStickers.size)
+        assertTrue(changed)
 
-        // Heal / populate autofill slots with transparent bytes instead of copying user's sticker
-        val neededNames = ((userStickers.size + 1)..3).map { slot ->
-            String.format("autofill_sticker_%02d.webp", slot)
-        }.toSet()
-
-        for (name in neededNames) {
-            val fillerFile = File(packDir, name)
-            if (!fillerFile.exists() || !fillerFile.readBytes().contentEquals(transparentFillerBytes)) {
-                fillerFile.writeBytes(transparentFillerBytes)
-            }
-        }
-
-        val allPackFiles = packDir.listFiles { f ->
-            f.extension.equals("webp", ignoreCase = true)
-        }?.sortedBy { it.name }.orEmpty()
-
-        // Total should be 3: 1 user sticker + 2 transparent fillers (NOT duplicates of stickerA)
-        assertEquals(3, allPackFiles.size)
         val filler2 = File(packDir, "autofill_sticker_02.webp")
         val filler3 = File(packDir, "autofill_sticker_03.webp")
         assertTrue(filler2.exists())
         assertTrue(filler3.exists())
         assertFalse(filler2.readBytes().contentEquals(stickerA.readBytes()))
-        assertFalse(filler3.readBytes().contentEquals(stickerA.readBytes()))
         assertTrue(filler2.readBytes().contentEquals(transparentFillerBytes))
         assertTrue(filler3.readBytes().contentEquals(transparentFillerBytes))
-    }
 
-    @Test
-    fun testStaticAndAnimatedPacksAreCompletelySeparated() {
-        val packsRoot = tempFolder.newFolder("sticker_packs")
-        val staticDir = File(packsRoot, "cobalt_custom_pack_static").apply { mkdirs() }
-        val animatedDir = File(packsRoot, "cobalt_custom_pack_animated").apply { mkdirs() }
-
-        // User saves 2 photo stickers in static pack
-        File(staticDir, "user_sticker_1.webp").writeText("photo1")
-        File(staticDir, "user_sticker_2.webp").writeText("photo2")
-
-        // User switches to animated and saves a GIF sticker
-        File(animatedDir, "user_sticker_anim1.webp").writeText("anim1")
-
-        // Crucial: Static pack remains 100% intact with its 2 stickers!
-        val staticFiles = staticDir.listFiles { f -> f.name.startsWith("user_sticker_") }?.sortedBy { it.name }.orEmpty()
-        val animatedFiles = animatedDir.listFiles { f -> f.name.startsWith("user_sticker_") }?.sortedBy { it.name }.orEmpty()
-
-        assertEquals(2, staticFiles.size)
-        assertEquals(1, animatedFiles.size)
-        assertEquals("photo1", staticFiles[0].readText())
-        assertEquals("photo2", staticFiles[1].readText())
-        assertEquals("anim1", animatedFiles[0].readText())
+        // Delete the last user sticker: all fillers must be removed
+        assertTrue(stickerA.delete())
+        val (emptyUsers, changedAfterEmpty) = StickerRepository.syncPackFillersInDirectory(packDir, transparentFillerBytes)
+        assertTrue(emptyUsers.isEmpty())
+        assertTrue(changedAfterEmpty)
+        assertFalse(filler2.exists())
+        assertFalse(filler3.exists())
     }
 
     @Test
     fun testWordWrapSplitsLongTextWithoutNewlines() {
         val longText = "Selamat Ulang Tahun Sahabat Karibku Tercinta"
-        val maxCharsPerLine = 16
-
-        val result = mutableListOf<String>()
-        val paragraphs = longText.trim().split("\n")
-        for (paragraph in paragraphs) {
-            val words = paragraph.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
-            if (words.isEmpty()) continue
-            var currentLine = StringBuilder()
-            for (word in words) {
-                if (currentLine.isEmpty()) {
-                    currentLine.append(word)
-                } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
-                    currentLine.append(" ").append(word)
-                } else {
-                    result.add(currentLine.toString())
-                    currentLine = StringBuilder(word)
-                }
-            }
-            if (currentLine.isNotEmpty()) {
-                result.add(currentLine.toString())
-            }
-        }
+        val result = StickerConverter.wrapText(longText, maxCharsPerLine = 16)
 
         assertTrue(result.size >= 3)
-        // All wrapped lines must be <= maxCharsPerLine (or a single long word)
         for (line in result) {
             assertTrue(line.length <= 20)
         }
     }
 
     @Test
-    fun testCachePruningRetainsOnlyRecentFiveFiles() {
-        val cacheDir = tempFolder.newFolder("stickers_cache")
+    fun testAnimatedWebpContainerFromSingleFrameHasValidRiffAndTwoAnmfFrames() {
+        // Minimal single-frame RIFF WEBP with a 4-byte dummy VP8L chunk
+        val vp8lChunk = byteArrayOf(
+            'V'.code.toByte(), 'P'.code.toByte(), '8'.code.toByte(), 'L'.code.toByte(),
+            4, 0, 0, 0,
+            0x2F, 0x00, 0x00, 0x00
+        )
+        val riffSize = 4 + vp8lChunk.size
+        val singleFrame = ByteBuffer.allocate(8 + riffSize).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray(StandardCharsets.US_ASCII))
+            putInt(riffSize)
+            put("WEBP".toByteArray(StandardCharsets.US_ASCII))
+            put(vp8lChunk)
+        }.array()
 
-        // Create 8 dummy preview files
-        for (i in 1..8) {
-            val file = File(cacheDir, "preview_$i.webp")
-            file.writeText("data_$i")
-            file.setLastModified(1000L * i)
-        }
-
-        // Run pruning logic
-        cacheDir.listFiles { f -> f.extension.equals("webp", ignoreCase = true) }
-            ?.sortedByDescending { it.lastModified() }
-            ?.drop(5)
-            ?.forEach { it.delete() }
-
-        val remainingFiles = cacheDir.listFiles()?.sortedBy { it.lastModified() }.orEmpty()
-        assertEquals(5, remainingFiles.size)
-        assertEquals("preview_4.webp", remainingFiles[0].name)
-        assertEquals("preview_8.webp", remainingFiles[4].name)
+        val animated = StickerConverter.buildAnimatedWebpFromSingleFrame(singleFrame, frameDurationMs = 100, frameCount = 2)
+        assertEquals("RIFF", String(animated, 0, 4, StandardCharsets.US_ASCII))
+        assertEquals("WEBP", String(animated, 8, 4, StandardCharsets.US_ASCII))
+        val declaredRiffSize = ByteBuffer.wrap(animated, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
+        assertEquals(animated.size - 8, declaredRiffSize)
+        assertEquals("VP8X", String(animated, 12, 4, StandardCharsets.US_ASCII))
+        assertEquals("ANIM", String(animated, 30, 4, StandardCharsets.US_ASCII))
+        assertEquals("ANMF", String(animated, 44, 4, StandardCharsets.US_ASCII))
     }
 
     @Test

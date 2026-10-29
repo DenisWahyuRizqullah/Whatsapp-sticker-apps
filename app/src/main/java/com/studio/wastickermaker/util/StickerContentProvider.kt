@@ -27,10 +27,6 @@ class StickerContentProvider : ContentProvider() {
         const val ANIMATED_PACK_NAME = "Koleksi Stiker Gerak"
         const val DEFAULT_PACK_PUBLISHER = "Sticker Maker"
 
-        // For backwards compatibility
-        const val DEFAULT_PACK_ID = STATIC_PACK_ID
-        const val DEFAULT_PACK_NAME = STATIC_PACK_NAME
-
         const val STICKER_PACK_IDENTIFIER_IN_QUERY = "sticker_pack_identifier"
         const val STICKER_PACK_NAME_IN_QUERY = "sticker_pack_name"
         const val STICKER_PACK_PUBLISHER_IN_QUERY = "sticker_pack_publisher"
@@ -156,7 +152,7 @@ class StickerContentProvider : ContentProvider() {
     }
 
     private fun buildStickersListCursor(uri: Uri): Cursor {
-        val packId = uri.lastPathSegment ?: DEFAULT_PACK_ID
+        val packId = uri.lastPathSegment ?: STATIC_PACK_ID
         val packDir = File(context?.filesDir, "sticker_packs/$packId")
         val webpFiles = packDir.listFiles { file ->
             file.isFile && file.extension.equals("webp", ignoreCase = true) &&
@@ -199,9 +195,13 @@ class StickerContentProvider : ContentProvider() {
         val packId = segments[segments.size - 2]
         val fileName = segments[segments.size - 1]
 
-        val targetFile = File(context?.filesDir, "sticker_packs/$packId/$fileName")
-        if (!targetFile.exists()) {
-            throw FileNotFoundException("Sticker asset not found: ${targetFile.absolutePath}")
+        val packsRoot = File(context?.filesDir, "sticker_packs").canonicalFile
+        val targetFile = File(packsRoot, "$packId/$fileName").canonicalFile
+        if (!targetFile.path.startsWith(packsRoot.path + File.separator) ||
+            !targetFile.extension.equals("webp", ignoreCase = true) ||
+            !targetFile.exists()
+        ) {
+            throw FileNotFoundException("Sticker asset not found: $fileName")
         }
         val pfd = ParcelFileDescriptor.open(targetFile, ParcelFileDescriptor.MODE_READ_ONLY)
         return AssetFileDescriptor(pfd, 0, AssetFileDescriptor.UNKNOWN_LENGTH)

@@ -18,7 +18,4 @@ data class StickerOutput(
 ) {
     val sizeKbFormatted: String
         get() = String.format("%.1f KB", sizeBytes / 1024.0)
-
-    val maxBudgetKb: Int
-        get() = if (isAnimated) 500 else 100
 }
