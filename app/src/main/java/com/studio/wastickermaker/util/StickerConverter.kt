@@ -19,6 +19,7 @@ import androidx.core.content.FileProvider
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
+import com.studio.wastickermaker.data.model.AppSettings
 import com.studio.wastickermaker.data.model.MediaInputType
 import com.studio.wastickermaker.data.model.ScaleFitMode
 import com.studio.wastickermaker.data.model.SelectedMediaInfo
@@ -76,7 +77,10 @@ class StickerConverter(private val context: Context) {
         AnimatedEncodingProfile(fps = 6,  quality = 22, compressionLevel = 6)
     )
 
-    suspend fun inspectMediaUri(uri: Uri): SelectedMediaInfo = withContext(Dispatchers.IO) {
+    suspend fun inspectMediaUri(
+        uri: Uri,
+        settings: AppSettings = AppSettings()
+    ): SelectedMediaInfo = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val mimeType = detectMimeType(uri)
             ?: throw StickerConversionException("Could not detect file format.")
@@ -91,7 +95,7 @@ class StickerConverter(private val context: Context) {
         }
 
         val defaultEndMs = if (inputType == MediaInputType.VIDEO) {
-            min(durationMs, MAX_VIDEO_TRIM_DURATION_MS)
+            min(durationMs, settings.maxAnimatedDurationMs)
         } else {
             0L
         }
@@ -104,7 +108,8 @@ class StickerConverter(private val context: Context) {
             sourceSizeBytes = fileSize,
             totalDurationMs = durationMs,
             trimStartMs = 0L,
-            trimEndMs = defaultEndMs
+            trimEndMs = defaultEndMs,
+            fitMode = settings.defaultFitMode
         )
     }
 
@@ -138,20 +143,22 @@ class StickerConverter(private val context: Context) {
         uri: Uri,
         fitMode: ScaleFitMode = ScaleFitMode.CENTER_CROP,
         stickerText: String = "",
+        resolutionPercent: Int = 100,
+        publisher: String = StickerContentProvider.DEFAULT_PACK_PUBLISHER,
         onProgress: (Float, String) -> Unit = { _, _ -> }
     ): File = withContext(Dispatchers.IO) {
         onProgress(0.20f, "Loading photo...")
         val sourceBitmap = decodeBitmapFromUri(uri)
 
         onProgress(0.50f, "Formatting 512x512 sticker canvas...")
-        val canvasBitmap = transformBitmapTo512x512(sourceBitmap, fitMode, stickerText)
+        val canvasBitmap = transformBitmapTo512x512(sourceBitmap, fitMode, stickerText, resolutionPercent)
         if (sourceBitmap !== canvasBitmap) {
             sourceBitmap.recycle()
         }
 
         onProgress(0.75f, "Optimizing WebP sticker size...")
         val outputFile = createOutputWebpFile("sticker_static")
-        var currentQuality = 90
+        var currentQuality = ((90 * resolutionPercent.coerceIn(50, 100)) / 100).coerceIn(32, 90)
         var finalWebpBytes: ByteArray
 
         val compressFormat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -165,7 +172,12 @@ class StickerConverter(private val context: Context) {
             val baos = ByteArrayOutputStream()
             canvasBitmap.compress(compressFormat, currentQuality, baos)
             val rawWebp = baos.toByteArray()
-            finalWebpBytes = injectWhatsAppExifChunk(rawWebp)
+            finalWebpBytes = injectWhatsAppExifChunk(
+                webpBytes = rawWebp,
+                packId = StickerContentProvider.STATIC_PACK_ID,
+                packName = StickerContentProvider.STATIC_PACK_NAME,
+                publisher = publisher
+            )
             if (finalWebpBytes.size <= MAX_STATIC_SIZE_BYTES) {
                 break
             }
@@ -191,13 +203,16 @@ class StickerConverter(private val context: Context) {
     }
 
     /**
-     * Converts a Video (MP4, MKV, 3GP) trimmed to <= 6 seconds into a 512x512 Animated WebP (<= 500 KB).
+     * Converts a Video (MP4, MKV, 3GP) trimmed to <= maxDurationMs into a 512x512 Animated WebP (<= 500 KB).
      */
     suspend fun convertVideoToAnimatedWebp(
         uri: Uri,
         startMs: Long,
         endMs: Long,
         fitMode: ScaleFitMode = ScaleFitMode.CENTER_CROP,
+        maxDurationMs: Long = MAX_VIDEO_TRIM_DURATION_MS,
+        resolutionPercent: Int = 100,
+        publisher: String = StickerContentProvider.DEFAULT_PACK_PUBLISHER,
         onProgress: (Float, String) -> Unit = { _, _ -> }
     ): File = withContext(Dispatchers.IO) {
         if (endMs <= startMs) {
@@ -208,9 +223,9 @@ class StickerConverter(private val context: Context) {
         }
 
         val clipDurationMs = endMs - startMs
-        if (clipDurationMs > MAX_VIDEO_TRIM_DURATION_MS) {
+        if (clipDurationMs > maxDurationMs) {
             throw StickerConversionException(
-                message = "Please trim the video to 6 seconds or less.",
+                message = "Please trim the video to ${maxDurationMs / 1000} seconds or less.",
                 isDurationLimitError = true
             )
         }
@@ -228,6 +243,7 @@ class StickerConverter(private val context: Context) {
             val outputFile = createOutputWebpFile("sticker_video")
             val startSeconds = String.format(Locale.US, "%.3f", startMs / 1000.0)
             val durationSeconds = String.format(Locale.US, "%.3f", clipDurationMs / 1000.0)
+            val clampedRes = resolutionPercent.coerceIn(50, 100)
 
             for ((index, profile) in animatedProfiles.withIndex()) {
                 onProgress(
@@ -235,7 +251,8 @@ class StickerConverter(private val context: Context) {
                     "Creating animated sticker (${profile.fps} FPS)..."
                 )
 
-                val scaleFilter = build512ScaleFilter(profile.fps, fitMode)
+                val scaledQuality = ((profile.quality * clampedRes) / 100).coerceAtLeast(18)
+                val scaleFilter = build512ScaleFilter(profile.fps, fitMode, clampedRes)
                 val command = buildString {
                     append("-y ")
                     append("-ss $startSeconds ")
@@ -245,7 +262,7 @@ class StickerConverter(private val context: Context) {
                     append("-vcodec libwebp ")
                     append("-lossless 0 ")
                     append("-compression_level ${profile.compressionLevel} ")
-                    append("-q:v ${profile.quality} ")
+                    append("-q:v $scaledQuality ")
                     append("-loop 0 ")
                     append("-preset default ")
                     append("-an -vsync 0 ")
@@ -263,7 +280,12 @@ class StickerConverter(private val context: Context) {
                 )
 
                 if (outputFile.exists() && outputFile.length() in 1..(MAX_ANIMATED_SIZE_BYTES - 512)) {
-                    val withExif = injectWhatsAppExifChunk(outputFile.readBytes())
+                    val withExif = injectWhatsAppExifChunk(
+                        webpBytes = outputFile.readBytes(),
+                        packId = StickerContentProvider.ANIMATED_PACK_ID,
+                        packName = StickerContentProvider.ANIMATED_PACK_NAME,
+                        publisher = publisher
+                    )
                     if (withExif.size <= MAX_ANIMATED_SIZE_BYTES) {
                         outputFile.writeBytes(withExif)
                         onProgress(1.0f, "Animated sticker ready!")
@@ -288,6 +310,9 @@ class StickerConverter(private val context: Context) {
     suspend fun convertGifToAnimatedWebp(
         uri: Uri,
         fitMode: ScaleFitMode = ScaleFitMode.FIT_CENTER,
+        maxDurationSec: Int = 6,
+        resolutionPercent: Int = 100,
+        publisher: String = StickerContentProvider.DEFAULT_PACK_PUBLISHER,
         onProgress: (Float, String) -> Unit = { _, _ -> }
     ): File = withContext(Dispatchers.IO) {
         onProgress(0.15f, "Reading GIF frames...")
@@ -295,6 +320,8 @@ class StickerConverter(private val context: Context) {
 
         try {
             val outputFile = createOutputWebpFile("sticker_gif")
+            val safeDurationSec = maxDurationSec.coerceIn(2, 10)
+            val clampedRes = resolutionPercent.coerceIn(50, 100)
 
             for ((index, profile) in animatedProfiles.withIndex()) {
                 onProgress(
@@ -302,16 +329,17 @@ class StickerConverter(private val context: Context) {
                     "Optimizing animated GIF (${profile.fps} FPS)..."
                 )
 
-                val scaleFilter = build512ScaleFilter(profile.fps, fitMode)
+                val scaledQuality = ((profile.quality * clampedRes) / 100).coerceAtLeast(18)
+                val scaleFilter = build512ScaleFilter(profile.fps, fitMode, clampedRes)
                 val command = buildString {
                     append("-y ")
-                    append("-t 10.0 ")
+                    append("-t ${safeDurationSec}.0 ")
                     append("-i \"${tempInputFile.absolutePath}\" ")
                     append("-vf \"$scaleFilter\" ")
                     append("-vcodec libwebp ")
                     append("-lossless 0 ")
                     append("-compression_level ${profile.compressionLevel} ")
-                    append("-q:v ${profile.quality} ")
+                    append("-q:v $scaledQuality ")
                     append("-loop 0 ")
                     append("-preset default ")
                     append("-an -vsync 0 ")
@@ -320,7 +348,7 @@ class StickerConverter(private val context: Context) {
 
                 executeFfmpegCommand(
                     command = command,
-                    totalDurationMs = 3_000L,
+                    totalDurationMs = safeDurationSec * 1_000L,
                     onProgress = { passProgress ->
                         val mapped = (0.25f + passProgress * 0.65f).coerceAtMost(0.95f)
                         onProgress(mapped, "Converting GIF to sticker...")
@@ -328,7 +356,12 @@ class StickerConverter(private val context: Context) {
                 )
 
                 if (outputFile.exists() && outputFile.length() in 1..(MAX_ANIMATED_SIZE_BYTES - 512)) {
-                    val withExif = injectWhatsAppExifChunk(outputFile.readBytes())
+                    val withExif = injectWhatsAppExifChunk(
+                        webpBytes = outputFile.readBytes(),
+                        packId = StickerContentProvider.ANIMATED_PACK_ID,
+                        packName = StickerContentProvider.ANIMATED_PACK_NAME,
+                        publisher = publisher
+                    )
                     if (withExif.size <= MAX_ANIMATED_SIZE_BYTES) {
                         outputFile.writeBytes(withExif)
                         onProgress(1.0f, "Animated sticker ready!")
@@ -349,6 +382,7 @@ class StickerConverter(private val context: Context) {
 
     suspend fun convertToStickerOutput(
         mediaInfo: SelectedMediaInfo,
+        settings: AppSettings = AppSettings(),
         onProgress: (Float, String) -> Unit
     ): StickerOutput = withContext(Dispatchers.IO) {
         val outputFile = when (mediaInfo.inputType) {
@@ -356,6 +390,8 @@ class StickerConverter(private val context: Context) {
                 uri = mediaInfo.uri,
                 fitMode = mediaInfo.fitMode,
                 stickerText = mediaInfo.stickerText,
+                resolutionPercent = settings.resolutionPercent,
+                publisher = settings.effectivePublisher,
                 onProgress = onProgress
             )
             MediaInputType.VIDEO -> convertVideoToAnimatedWebp(
@@ -363,11 +399,17 @@ class StickerConverter(private val context: Context) {
                 startMs = mediaInfo.trimStartMs,
                 endMs = mediaInfo.trimEndMs,
                 fitMode = mediaInfo.fitMode,
+                maxDurationMs = settings.maxAnimatedDurationMs,
+                resolutionPercent = settings.resolutionPercent,
+                publisher = settings.effectivePublisher,
                 onProgress = onProgress
             )
             MediaInputType.ANIMATED_GIF -> convertGifToAnimatedWebp(
                 uri = mediaInfo.uri,
                 fitMode = mediaInfo.fitMode,
+                maxDurationSec = settings.maxAnimatedDurationSec,
+                resolutionPercent = settings.resolutionPercent,
+                publisher = settings.effectivePublisher,
                 onProgress = onProgress
             )
         }
@@ -574,13 +616,19 @@ class StickerConverter(private val context: Context) {
         return out.toByteArray()
     }
 
-    private fun build512ScaleFilter(fps: Int, fitMode: ScaleFitMode): String {
+    private fun build512ScaleFilter(
+        fps: Int,
+        fitMode: ScaleFitMode,
+        resolutionPercent: Int = 100
+    ): String {
+        val internalPx = AppSettings.computeInternalResolutionPx(resolutionPercent)
+        val postScale = if (internalPx < STICKER_DIMENSION_PX) ",scale=512:512:flags=bilinear" else ""
         return when (fitMode) {
             ScaleFitMode.CENTER_CROP -> {
-                "fps=$fps,scale=512:512:force_original_aspect_ratio=increase,crop=512:512,format=yuva420p"
+                "fps=$fps,scale=$internalPx:$internalPx:force_original_aspect_ratio=increase,crop=$internalPx:$internalPx$postScale,format=yuva420p"
             }
             ScaleFitMode.FIT_CENTER -> {
-                "fps=$fps,scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=yuva420p"
+                "fps=$fps,scale=$internalPx:$internalPx:force_original_aspect_ratio=decrease,pad=$internalPx:$internalPx:(ow-iw)/2:(oh-ih)/2:color=0x00000000$postScale,format=yuva420p"
             }
         }
     }
@@ -642,31 +690,53 @@ class StickerConverter(private val context: Context) {
     private fun transformBitmapTo512x512(
         source: Bitmap,
         fitMode: ScaleFitMode,
-        stickerText: String = ""
+        stickerText: String = "",
+        resolutionPercent: Int = 100
     ): Bitmap {
         val targetSize = STICKER_DIMENSION_PX
-        val output = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
-        output.setHasAlpha(true)
-        val canvas = Canvas(output)
-        canvas.drawColor(Color.TRANSPARENT)
+        val internalSize = AppSettings.computeInternalResolutionPx(resolutionPercent)
+        val renderSize = internalSize.toFloat()
+
+        val workBitmap = Bitmap.createBitmap(internalSize, internalSize, Bitmap.Config.ARGB_8888)
+        workBitmap.setHasAlpha(true)
+        val workCanvas = Canvas(workBitmap)
+        workCanvas.drawColor(Color.TRANSPARENT)
 
         val srcWidth = source.width.toFloat()
         val srcHeight = source.height.toFloat()
-        if (srcWidth <= 0f || srcHeight <= 0f) return output
+        if (srcWidth <= 0f || srcHeight <= 0f) return workBitmap
 
         val scale = when (fitMode) {
-            ScaleFitMode.CENTER_CROP -> max(targetSize / srcWidth, targetSize / srcHeight)
-            ScaleFitMode.FIT_CENTER -> min(targetSize / srcWidth, targetSize / srcHeight)
+            ScaleFitMode.CENTER_CROP -> max(renderSize / srcWidth, renderSize / srcHeight)
+            ScaleFitMode.FIT_CENTER -> min(renderSize / srcWidth, renderSize / srcHeight)
         }
 
         val scaledWidth = srcWidth * scale
         val scaledHeight = srcHeight * scale
-        val left = (targetSize - scaledWidth) / 2f
-        val top = (targetSize - scaledHeight) / 2f
+        val left = (renderSize - scaledWidth) / 2f
+        val top = (renderSize - scaledHeight) / 2f
 
         val destRect = RectF(left, top, left + scaledWidth, top + scaledHeight)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
-        canvas.drawBitmap(source, null, destRect, paint)
+        workCanvas.drawBitmap(source, null, destRect, paint)
+
+        val output = if (internalSize == targetSize) {
+            workBitmap
+        } else {
+            val upscaled = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
+            upscaled.setHasAlpha(true)
+            val upscaleCanvas = Canvas(upscaled)
+            upscaleCanvas.drawColor(Color.TRANSPARENT)
+            upscaleCanvas.drawBitmap(
+                workBitmap,
+                null,
+                RectF(0f, 0f, targetSize.toFloat(), targetSize.toFloat()),
+                paint
+            )
+            workBitmap.recycle()
+            upscaled
+        }
+        val canvas = Canvas(output)
 
         // ponytail: native Canvas drawText with stroke + fill meme styling; no heavy text engine needed
         drawTextOverlayOnCanvas(canvas, stickerText)
@@ -792,5 +862,18 @@ class StickerConverter(private val context: Context) {
             ?.drop(5)
             ?.forEach { it.delete() }
         return File(stickerDir, "${prefix}_${System.currentTimeMillis()}.webp")
+    }
+
+    fun clearPreviewCache(): Long {
+        val stickerDir = File(context.cacheDir, STICKER_CACHE_FOLDER)
+        if (!stickerDir.exists()) return 0L
+        var freedBytes = 0L
+        stickerDir.listFiles()?.forEach { file ->
+            val len = file.length()
+            if (file.delete()) {
+                freedBytes += len
+            }
+        }
+        return freedBytes
     }
 }

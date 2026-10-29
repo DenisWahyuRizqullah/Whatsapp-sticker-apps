@@ -9,6 +9,7 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.studio.wastickermaker.BuildConfig
+import com.studio.wastickermaker.data.repository.SettingsRepository
 import java.io.File
 import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets
@@ -129,12 +130,13 @@ class StickerContentProvider : ContentProvider() {
             val dataVersion = if (versionFile.exists()) versionFile.readText().trim().ifEmpty { "1" } else "1"
             val isAnimated = packId == ANIMATED_PACK_ID || stickerFiles.any { isAnimatedWebpFile(it) }
             val packName = if (isAnimated) ANIMATED_PACK_NAME else STATIC_PACK_NAME
+            val publisher = SettingsRepository.getCustomPublisher(context)
 
             cursor.addRow(
                 arrayOf<Any>(
                     packId,
                     packName,
-                    DEFAULT_PACK_PUBLISHER,
+                    publisher,
                     "tray_icon.webp",
                     "",
                     "",

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import com.studio.wastickermaker.BuildConfig
+import com.studio.wastickermaker.data.model.WhatsAppTarget
 
 /**
  * Builds the official `com.whatsapp.intent.action.ENABLE_STICKER_PACK` intent
@@ -24,9 +25,14 @@ object WhatsAppShareHelper {
     fun createAddStickerPackIntent(
         context: Context,
         packIdentifier: String = StickerContentProvider.STATIC_PACK_ID,
-        packName: String = StickerContentProvider.STATIC_PACK_NAME
+        packName: String = StickerContentProvider.STATIC_PACK_NAME,
+        whatsAppTarget: WhatsAppTarget = WhatsAppTarget.AUTO
     ): Intent {
-        val targetPackage = resolveInstalledWhatsAppPackage(context)
+        val targetPackage = when (whatsAppTarget) {
+            WhatsAppTarget.CONSUMER -> resolveInstalledWhatsAppPackage(context, preferBusiness = false)
+            WhatsAppTarget.BUSINESS -> resolveInstalledWhatsAppPackage(context, preferBusiness = true)
+            WhatsAppTarget.AUTO -> resolveInstalledWhatsAppPackage(context, preferBusiness = false)
+        }
         return Intent(ACTION_ENABLE_STICKER_PACK).apply {
             putExtra(EXTRA_STICKER_PACK_ID, packIdentifier)
             putExtra(EXTRA_STICKER_PACK_AUTHORITY, BuildConfig.CONTENT_PROVIDER_AUTHORITY)

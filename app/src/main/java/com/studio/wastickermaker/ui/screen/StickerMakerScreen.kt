@@ -3,6 +3,7 @@ package com.studio.wastickermaker.ui.screen
 import android.app.Activity
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +14,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,15 +34,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.LibraryAdd
+import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -79,11 +86,17 @@ import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
+import com.studio.wastickermaker.data.model.AppLanguage
+import com.studio.wastickermaker.data.model.AppSettings
+import com.studio.wastickermaker.data.model.AppThemeMode
 import com.studio.wastickermaker.data.model.MediaInputType
 import com.studio.wastickermaker.data.model.ScaleFitMode
+import com.studio.wastickermaker.data.model.WhatsAppTarget
 import com.studio.wastickermaker.ui.state.StickerPackSegment
 import com.studio.wastickermaker.ui.state.StickerUiState
 import com.studio.wastickermaker.ui.theme.AiryCobaltTokens
+import com.studio.wastickermaker.ui.theme.AppStrings
+import com.studio.wastickermaker.ui.theme.StickerStrings
 import com.studio.wastickermaker.ui.theme.frostedBentoCard
 import com.studio.wastickermaker.ui.viewmodel.StickerViewModel
 import com.studio.wastickermaker.util.WhatsAppShareHelper
@@ -96,6 +109,8 @@ fun StickerMakerScreen(
 ) {
     val context = LocalContext.current
     val screenState by viewModel.screenState.collectAsStateWithLifecycle()
+    val settings = screenState.settings
+    val strings = AppStrings.forLanguage(settings.language)
     val scrollState = rememberScrollState()
 
     LaunchedEffect(screenState.segmentSwitchNotice) {
@@ -103,6 +118,28 @@ fun StickerMakerScreen(
             Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
             viewModel.clearSegmentNotice()
         }
+    }
+
+    if (screenState.isSettingsOpen) {
+        BackHandler { viewModel.setSettingsOpen(false) }
+        SettingsScreenContent(
+            settings = settings,
+            strings = strings,
+            onBack = { viewModel.setSettingsOpen(false) },
+            onLanguageSelected = viewModel::onLanguageChanged,
+            onThemeSelected = viewModel::onThemeModeChanged,
+            onResolutionSelected = viewModel::onResolutionPercentChanged,
+            onMaxDurationSelected = viewModel::onMaxDurationSecChanged,
+            onDefaultFitModeSelected = viewModel::onDefaultFitModeChanged,
+            onWhatsAppTargetSelected = viewModel::onWhatsAppTargetChanged,
+            onCustomPublisherChanged = viewModel::onCustomPublisherChanged,
+            onClearCacheClicked = {
+                viewModel.clearPreviewCache { freedKb ->
+                    Toast.makeText(context, strings.cacheClearedToast(freedKb), Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+        return
     }
 
     val coilImageLoader = remember(context) {
@@ -128,9 +165,11 @@ fun StickerMakerScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            Toast.makeText(context, "Sticker Pack added to WhatsApp!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, strings.packAddedToast, Toast.LENGTH_SHORT).show()
         }
     }
+
+    val currentSegmentLabel = strings.segmentLabel(screenState.selectedSegment)
 
     Box(
         modifier = Modifier
@@ -144,7 +183,7 @@ fun StickerMakerScreen(
                 .padding(horizontal = 20.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Simple Top Header
+            // Top Header with Minimalist Right-Corner Settings Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -156,31 +195,52 @@ fun StickerMakerScreen(
                         .padding(end = 12.dp)
                 ) {
                     Text(
-                        text = "Sticker Maker",
+                        text = strings.appTitle,
                         color = AiryCobaltTokens.DeepSlateHeading,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Turn any photo, GIF, or video into a WhatsApp sticker",
+                        text = strings.appSubtitle,
                         color = AiryCobaltTokens.MutedCoolGrey,
                         fontSize = 13.sp
                     )
                 }
 
-                if (screenState.selectedMedia != null) {
-                    OutlinedButton(
-                        onClick = { viewModel.resetState() },
-                        shape = CircleShape,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (screenState.selectedMedia != null) {
+                        OutlinedButton(
+                            onClick = { viewModel.resetState() },
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = strings.newButton,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(strings.newButton, fontSize = 12.sp, maxLines = 1)
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { viewModel.setSettingsOpen(true) },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(AiryCobaltTokens.FrostedCardSurface)
+                            .border(1.dp, AiryCobaltTokens.FrostedCardBorder, CircleShape)
                     ) {
                         Icon(
-                            imageVector = Icons.Outlined.Refresh,
-                            contentDescription = "Reset",
-                            modifier = Modifier.size(16.dp)
+                            imageVector = Icons.Outlined.Settings,
+                            contentDescription = strings.settingsButtonDesc,
+                            tint = AiryCobaltTokens.DeepSlateHeading,
+                            modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("New", fontSize = 12.sp, maxLines = 1)
                     }
                 }
             }
@@ -216,7 +276,7 @@ fun StickerMakerScreen(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Choose Photo, GIF, or Video",
+                        text = strings.chooseMediaButton,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         textAlign = TextAlign.Center
@@ -246,7 +306,7 @@ fun StickerMakerScreen(
                             color = AiryCobaltTokens.PeriwinkleSoft
                         ) {
                             Text(
-                                text = media.inputType.displayLabel,
+                                text = strings.mediaTypeLabel(media.inputType, settings.language),
                                 color = AiryCobaltTokens.CobaltDeep,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -263,7 +323,7 @@ fun StickerMakerScreen(
                             FilterChip(
                                 selected = media.fitMode == mode,
                                 onClick = { viewModel.onScaleFitModeChanged(mode) },
-                                label = { Text(mode.label, fontSize = 12.sp) },
+                                label = { Text(strings.fitModeLabel(mode, settings.language), fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
                                     selectedLabelColor = Color.White
@@ -276,8 +336,8 @@ fun StickerMakerScreen(
                         OutlinedTextField(
                             value = media.stickerText,
                             onValueChange = { newText -> viewModel.onStickerTextChanged(newText) },
-                            label = { Text("Teks Stiker (Meme / Caption)", fontSize = 12.sp) },
-                            placeholder = { Text("Ketik teks untuk stiker...", fontSize = 13.sp) },
+                            label = { Text(strings.stickerTextLabel, fontSize = 12.sp) },
+                            placeholder = { Text(strings.stickerTextPlaceholder, fontSize = 13.sp) },
                             leadingIcon = {
                                 Icon(Icons.Outlined.TextFields, contentDescription = null, modifier = Modifier.size(18.dp))
                             },
@@ -321,13 +381,13 @@ fun StickerMakerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Trim Video (Max 6 seconds)",
+                                text = strings.trimVideoTitle(settings.maxAnimatedDurationSec),
                                 color = AiryCobaltTokens.SlateCardTitle,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
                             Text(
-                                text = String.format(Locale.US, "%.1fs selected", clipSec),
+                                text = String.format(Locale.US, "%.1fs %s", clipSec, strings.trimSelectedSuffix),
                                 color = AiryCobaltTokens.CobaltPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp
@@ -356,7 +416,7 @@ fun StickerMakerScreen(
                 }
             }
 
-            // Step 3: 1:1 Sticker Preview & Send to WhatsApp Card
+            // Step 3: 1:1 Sticker Preview & Save to Collection Card
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -371,7 +431,7 @@ fun StickerMakerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Sticker Preview",
+                        text = strings.previewTitle,
                         color = AiryCobaltTokens.SlateCardTitle,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp
@@ -379,7 +439,7 @@ fun StickerMakerScreen(
                     if (screenState.conversionState is StickerUiState.Success) {
                         val out = (screenState.conversionState as StickerUiState.Success).stickerOutput
                         Text(
-                            text = "${out.sizeKbFormatted} • Ready",
+                            text = "${out.sizeKbFormatted} • ${settings.resolutionPercent}% • ${strings.readyBadgeSuffix}",
                             color = AiryCobaltTokens.EmeraldPositive,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 12.sp
@@ -387,13 +447,13 @@ fun StickerMakerScreen(
                     }
                 }
 
-                // 1:1 Square Preview Box (Empty until user selects media)
+                // 1:1 Square Preview Box
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(0.82f)
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(24.dp))
-                        .background(Color.White.copy(alpha = 0.75f))
+                        .background(AiryCobaltTokens.PreviewBoxSurface)
                         .border(
                             width = 1.dp,
                             color = AiryCobaltTokens.PeriwinkleSoft,
@@ -403,18 +463,16 @@ fun StickerMakerScreen(
                 ) {
                     val previewFile = screenState.previewFile
                     if (previewFile != null && previewFile.exists()) {
-                        // Always keep preview image rendered to prevent blinking/flickering
                         AsyncImage(
                             model = ImageRequest.Builder(context)
                                 .data(previewFile)
                                 .build(),
                             imageLoader = coilImageLoader,
-                            contentDescription = "Sticker Preview",
+                            contentDescription = strings.previewTitle,
                             contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // If background debounce conversion is actively processing, show a subtle progress indicator overlay
                         if (screenState.conversionState is StickerUiState.Processing) {
                             Box(
                                 modifier = Modifier
@@ -444,7 +502,7 @@ fun StickerMakerScreen(
                                         modifier = Modifier.size(36.dp)
                                     )
                                     Text(
-                                        text = "Your sticker will appear here",
+                                        text = strings.emptyPreviewPlaceholder,
                                         color = AiryCobaltTokens.MutedCoolGrey,
                                         fontSize = 13.sp,
                                         textAlign = TextAlign.Center
@@ -485,7 +543,7 @@ fun StickerMakerScreen(
                                         .data(uiState.stickerOutput.file)
                                         .build(),
                                     imageLoader = coilImageLoader,
-                                    contentDescription = "Sticker Preview",
+                                    contentDescription = strings.previewTitle,
                                     contentScale = ContentScale.Fit,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -521,7 +579,7 @@ fun StickerMakerScreen(
                         Button(
                             onClick = {
                                 viewModel.onSaveCurrentStickerClicked()
-                                Toast.makeText(context, "Stiker berhasil disimpan ke ${screenState.selectedSegment.label}!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, strings.savedToast(currentSegmentLabel), Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -536,7 +594,7 @@ fun StickerMakerScreen(
                             Icon(Icons.Outlined.BookmarkAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "+ Simpan ke ${screenState.selectedSegment.label}",
+                                text = strings.saveToSegmentButton(currentSegmentLabel),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 textAlign = TextAlign.Center
@@ -560,7 +618,7 @@ fun StickerMakerScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Tersimpan di ${screenState.selectedSegment.label} ✓",
+                                text = strings.savedInSegmentButton(currentSegmentLabel),
                                 color = AiryCobaltTokens.EmeraldPositive,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -586,7 +644,8 @@ fun StickerMakerScreen(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Collections,
@@ -595,7 +654,7 @@ fun StickerMakerScreen(
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            text = "Koleksi Stiker Saya",
+                            text = strings.collectionTitle,
                             color = AiryCobaltTokens.SlateCardTitle,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 16.sp
@@ -607,7 +666,7 @@ fun StickerMakerScreen(
                         color = AiryCobaltTokens.PeriwinkleSoft
                     ) {
                         Text(
-                            text = "${screenState.packStickers.size} Stiker",
+                            text = strings.stickerCountBadge(screenState.packStickers.size),
                             color = AiryCobaltTokens.CobaltDeep,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
@@ -624,7 +683,7 @@ fun StickerMakerScreen(
                     FilterChip(
                         selected = screenState.selectedSegment == StickerPackSegment.STATIC,
                         onClick = { viewModel.onSegmentSelected(StickerPackSegment.STATIC) },
-                        label = { Text("Stiker Foto (${screenState.staticPackStickers.size})", fontSize = 12.sp) },
+                        label = { Text("${strings.staticSegmentLabel} (${screenState.staticPackStickers.size})", fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
                             selectedLabelColor = Color.White
@@ -633,7 +692,7 @@ fun StickerMakerScreen(
                     FilterChip(
                         selected = screenState.selectedSegment == StickerPackSegment.ANIMATED,
                         onClick = { viewModel.onSegmentSelected(StickerPackSegment.ANIMATED) },
-                        label = { Text("Stiker Gerak (${screenState.animatedPackStickers.size})", fontSize = 12.sp) },
+                        label = { Text("${strings.animatedSegmentLabel} (${screenState.animatedPackStickers.size})", fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
                             selectedLabelColor = Color.White
@@ -642,7 +701,7 @@ fun StickerMakerScreen(
                 }
 
                 Text(
-                    text = "Kelola ${screenState.selectedSegment.label.lowercase(Locale.getDefault())}. Stiker di segmen ini otomatis masuk ke keyboard WhatsApp.",
+                    text = strings.collectionDesc(currentSegmentLabel),
                     color = AiryCobaltTokens.MutedCoolGrey,
                     fontSize = 12.sp
                 )
@@ -657,7 +716,7 @@ fun StickerMakerScreen(
                                 modifier = Modifier
                                     .size(90.dp)
                                     .clip(RoundedCornerShape(16.dp))
-                                    .background(Color.White.copy(alpha = 0.8f))
+                                    .background(AiryCobaltTokens.PreviewBoxSurface)
                                     .border(
                                         width = 1.dp,
                                         color = AiryCobaltTokens.PeriwinkleSoft,
@@ -681,7 +740,7 @@ fun StickerMakerScreen(
                                 IconButton(
                                     onClick = {
                                         viewModel.deleteSticker(file)
-                                        Toast.makeText(context, "Stiker dihapus dari koleksi.", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, strings.deletedToast, Toast.LENGTH_SHORT).show()
                                     },
                                     modifier = Modifier
                                         .align(Alignment.TopEnd)
@@ -691,7 +750,7 @@ fun StickerMakerScreen(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Outlined.Delete,
-                                        contentDescription = "Hapus",
+                                        contentDescription = "Delete",
                                         tint = Color.White,
                                         modifier = Modifier.size(13.dp)
                                     )
@@ -707,11 +766,12 @@ fun StickerMakerScreen(
                                 val intent = WhatsAppShareHelper.createAddStickerPackIntent(
                                     context = context,
                                     packIdentifier = segment.packId,
-                                    packName = segment.packName
+                                    packName = segment.packName,
+                                    whatsAppTarget = settings.whatsAppTarget
                                 )
                                 addStickerPackLauncher.launch(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
+                            } catch (_: Exception) {
+                                Toast.makeText(context, strings.whatsAppErrorToast, Toast.LENGTH_SHORT).show()
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
@@ -727,7 +787,7 @@ fun StickerMakerScreen(
                         Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Tambahkan ${screenState.selectedSegment.label} (${screenState.packStickers.size}) ke WhatsApp",
+                            text = strings.addPackToWhatsAppButton(currentSegmentLabel, screenState.packStickers.size),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             textAlign = TextAlign.Center
@@ -738,12 +798,12 @@ fun StickerMakerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White.copy(alpha = 0.5f))
-                            .padding(vertical = 24.dp),
+                            .background(AiryCobaltTokens.PreviewBoxSurface)
+                            .padding(vertical = 24.dp, horizontal = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Belum ada ${screenState.selectedSegment.label.lowercase(Locale.getDefault())} di koleksi.\nBuat stiker pertamamu di atas!",
+                            text = strings.emptyCollectionPlaceholder(currentSegmentLabel),
                             color = AiryCobaltTokens.MutedCoolGrey,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center
@@ -752,5 +812,285 @@ fun StickerMakerScreen(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun SettingsScreenContent(
+    settings: AppSettings,
+    strings: StickerStrings,
+    onBack: () -> Unit,
+    onLanguageSelected: (AppLanguage) -> Unit,
+    onThemeSelected: (AppThemeMode) -> Unit,
+    onResolutionSelected: (Int) -> Unit,
+    onMaxDurationSelected: (Int) -> Unit,
+    onDefaultFitModeSelected: (ScaleFitMode) -> Unit,
+    onWhatsAppTargetSelected: (WhatsAppTarget) -> Unit,
+    onCustomPublisherChanged: (String) -> Unit,
+    onClearCacheClicked: () -> Unit
+) {
+    val scrollState = rememberScrollState()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AiryCobaltTokens.SkyCanvasBrush)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 20.dp, vertical = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Settings Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(AiryCobaltTokens.FrostedCardSurface)
+                        .border(1.dp, AiryCobaltTokens.FrostedCardBorder, CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = strings.backButton,
+                        tint = AiryCobaltTokens.DeepSlateHeading,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strings.settingsTitle,
+                        color = AiryCobaltTokens.DeepSlateHeading,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = strings.settingsSubtitle,
+                        color = AiryCobaltTokens.MutedCoolGrey,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // 1. Language Setting Card
+            SettingsSectionCard(
+                title = strings.languageSettingTitle,
+                description = strings.languageSettingDesc
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AppLanguage.entries.forEach { lang ->
+                        FilterChip(
+                            selected = settings.language == lang,
+                            onClick = { onLanguageSelected(lang) },
+                            label = { Text(lang.label, fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 2. Sticker Resolution % Setting Card
+            SettingsSectionCard(
+                title = strings.resolutionSettingTitle,
+                description = strings.resolutionSettingDesc
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AppSettings.RESOLUTION_OPTIONS.forEach { percent ->
+                        val px = AppSettings.computeInternalResolutionPx(percent)
+                        FilterChip(
+                            selected = settings.resolutionPercent == percent,
+                            onClick = { onResolutionSelected(percent) },
+                            label = { Text("$percent% (${px}px)", fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 3. GIF & Video Duration Limit Card
+            SettingsSectionCard(
+                title = strings.durationSettingTitle,
+                description = strings.durationSettingDesc
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AppSettings.DURATION_OPTIONS_SEC.forEach { sec ->
+                        FilterChip(
+                            selected = settings.maxAnimatedDurationSec == sec,
+                            onClick = { onMaxDurationSelected(sec) },
+                            label = { Text("$sec ${strings.secondsUnit}", fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 4. App Theme Card
+            SettingsSectionCard(
+                title = strings.themeSettingTitle,
+                description = strings.themeSettingDesc
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AppThemeMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = settings.themeMode == mode,
+                            onClick = { onThemeSelected(mode) },
+                            label = { Text(mode.label(settings.language), fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 5a. Default Fit Mode Card
+            SettingsSectionCard(
+                title = strings.defaultFitSettingTitle,
+                description = strings.defaultFitSettingDesc
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ScaleFitMode.entries.forEach { fitMode ->
+                        FilterChip(
+                            selected = settings.defaultFitMode == fitMode,
+                            onClick = { onDefaultFitModeSelected(fitMode) },
+                            label = { Text(strings.fitModeLabel(fitMode, settings.language), fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 5b. Target WhatsApp App Card
+            SettingsSectionCard(
+                title = strings.whatsAppTargetTitle,
+                description = strings.whatsAppTargetDesc
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    WhatsAppTarget.entries.forEach { target ->
+                        FilterChip(
+                            selected = settings.whatsAppTarget == target,
+                            onClick = { onWhatsAppTargetSelected(target) },
+                            label = { Text(target.label(settings.language), fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 5c. Custom Sticker Publisher / Author Card
+            SettingsSectionCard(
+                title = strings.publisherSettingTitle,
+                description = strings.publisherSettingDesc
+            ) {
+                OutlinedTextField(
+                    value = settings.customPublisher,
+                    onValueChange = onCustomPublisherChanged,
+                    placeholder = { Text(strings.publisherPlaceholder, fontSize = 13.sp) },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.PersonOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // 5d. Storage & Preview Cache Card
+            SettingsSectionCard(
+                title = strings.storageSettingTitle,
+                description = ""
+            ) {
+                OutlinedButton(
+                    onClick = onClearCacheClicked,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 46.dp)
+                ) {
+                    Icon(Icons.Outlined.CleaningServices, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = strings.clearCacheButton,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(
+    title: String,
+    description: String,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .frostedBentoCard(20.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = title,
+            color = AiryCobaltTokens.SlateCardTitle,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 15.sp
+        )
+        if (description.isNotBlank()) {
+            Text(
+                text = description,
+                color = AiryCobaltTokens.MutedCoolGrey,
+                fontSize = 12.sp
+            )
+        }
+        content()
     }
 }

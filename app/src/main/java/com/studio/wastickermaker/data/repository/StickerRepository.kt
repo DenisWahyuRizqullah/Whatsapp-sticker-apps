@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
 import com.studio.wastickermaker.BuildConfig
+import com.studio.wastickermaker.data.model.AppSettings
 import com.studio.wastickermaker.data.model.SelectedMediaInfo
 import com.studio.wastickermaker.data.model.StickerOutput
 import com.studio.wastickermaker.util.StickerContentProvider
@@ -58,15 +59,23 @@ class StickerRepository(
         } catch (_: Exception) {}
     }
 
-    suspend fun inspectSelectedUri(uri: Uri): SelectedMediaInfo {
-        return converter.inspectMediaUri(uri)
+    suspend fun inspectSelectedUri(
+        uri: Uri,
+        settings: AppSettings = AppSettings()
+    ): SelectedMediaInfo {
+        return converter.inspectMediaUri(uri, settings)
     }
 
     suspend fun convertMediaToSticker(
         mediaInfo: SelectedMediaInfo,
+        settings: AppSettings = AppSettings(),
         onProgress: (Float, String) -> Unit
     ): StickerOutput {
-        return converter.convertToStickerOutput(mediaInfo, onProgress)
+        return converter.convertToStickerOutput(mediaInfo, settings, onProgress)
+    }
+
+    suspend fun clearPreviewCache(): Long = withContext(Dispatchers.IO) {
+        converter.clearPreviewCache()
     }
 
     suspend fun addStickerToLocalPack(

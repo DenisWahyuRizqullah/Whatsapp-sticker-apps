@@ -1,5 +1,8 @@
 package com.studio.wastickermaker
 
+import com.studio.wastickermaker.data.model.AppLanguage
+import com.studio.wastickermaker.data.model.AppSettings
+import com.studio.wastickermaker.ui.theme.AppStrings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -181,5 +184,27 @@ class StickerCollectionLogicTest {
         assertEquals(5, remainingFiles.size)
         assertEquals("preview_4.webp", remainingFiles[0].name)
         assertEquals("preview_8.webp", remainingFiles[4].name)
+    }
+
+    @Test
+    fun testSettingsResolutionAndDurationCalculations() {
+        assertEquals(256, AppSettings.computeInternalResolutionPx(50))
+        assertEquals(384, AppSettings.computeInternalResolutionPx(75))
+        assertEquals(512, AppSettings.computeInternalResolutionPx(100))
+
+        val customSettings = AppSettings(
+            language = AppLanguage.ENGLISH,
+            resolutionPercent = 75,
+            maxAnimatedDurationSec = 8,
+            customPublisher = "   "
+        )
+        assertEquals(384, customSettings.internalResolutionPx)
+        assertEquals(8_000L, customSettings.maxAnimatedDurationMs)
+        assertEquals("Sticker Maker", customSettings.effectivePublisher)
+
+        val idStrings = AppStrings.forLanguage(AppLanguage.INDONESIAN)
+        val enStrings = AppStrings.forLanguage(AppLanguage.ENGLISH)
+        assertEquals("Pengaturan", idStrings.settingsTitle)
+        assertEquals("Settings", enStrings.settingsTitle)
     }
 }

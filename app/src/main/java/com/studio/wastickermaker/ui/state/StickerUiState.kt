@@ -1,5 +1,6 @@
 package com.studio.wastickermaker.ui.state
 
+import com.studio.wastickermaker.data.model.AppSettings
 import com.studio.wastickermaker.data.model.SelectedMediaInfo
 import com.studio.wastickermaker.data.model.StickerOutput
 import java.io.File
@@ -38,7 +39,9 @@ data class StickerScreenState(
     val animatedPackStickers: List<File> = emptyList(),
     val segmentSwitchNotice: String? = null,
     val previewFile: File? = null,
-    val isCurrentStickerSaved: Boolean = false
+    val isCurrentStickerSaved: Boolean = false,
+    val settings: AppSettings = AppSettings(),
+    val isSettingsOpen: Boolean = false
 ) {
     val packStickers: List<File>
         get() = if (selectedSegment == StickerPackSegment.STATIC) staticPackStickers else animatedPackStickers

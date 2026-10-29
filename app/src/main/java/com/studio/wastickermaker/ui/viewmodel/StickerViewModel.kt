@@ -4,17 +4,24 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.studio.wastickermaker.data.model.AppLanguage
+import com.studio.wastickermaker.data.model.AppSettings
+import com.studio.wastickermaker.data.model.AppThemeMode
 import com.studio.wastickermaker.data.model.MediaInputType
 import com.studio.wastickermaker.data.model.ScaleFitMode
+import com.studio.wastickermaker.data.model.WhatsAppTarget
+import com.studio.wastickermaker.data.repository.SettingsRepository
 import com.studio.wastickermaker.data.repository.StickerRepository
 import com.studio.wastickermaker.ui.state.StickerPackSegment
 import com.studio.wastickermaker.ui.state.StickerScreenState
 import com.studio.wastickermaker.ui.state.StickerUiState
+import com.studio.wastickermaker.ui.theme.AppStrings
 import com.studio.wastickermaker.util.StickerContentProvider
 import com.studio.wastickermaker.util.StickerConversionException
-import com.studio.wastickermaker.util.StickerConverter
 import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,12 +33,16 @@ class StickerViewModel(
 ) : AndroidViewModel(application) {
 
     private val repository = StickerRepository(application.applicationContext)
+    private val settingsRepository = SettingsRepository(application.applicationContext)
 
-    private val _screenState = MutableStateFlow(StickerScreenState())
+    private val _screenState = MutableStateFlow(
+        StickerScreenState(settings = settingsRepository.loadSettings())
+    )
     val screenState: StateFlow<StickerScreenState> = _screenState.asStateFlow()
 
     private var activeConversionJob: Job? = null
     private var textDebounceJob: Job? = null
+    private var publisherDebounceJob: Job? = null
 
     init {
         loadLocalPacks()
@@ -52,11 +63,97 @@ class StickerViewModel(
         }
     }
 
+    fun setSettingsOpen(open: Boolean) {
+        _screenState.update { it.copy(isSettingsOpen = open) }
+    }
+
+    fun onLanguageChanged(language: AppLanguage) {
+        updateSettings { it.copy(language = language) }
+    }
+
+    fun onThemeModeChanged(themeMode: AppThemeMode) {
+        updateSettings { it.copy(themeMode = themeMode) }
+    }
+
+    fun onResolutionPercentChanged(resolutionPercent: Int) {
+        val clamped = resolutionPercent.coerceIn(50, 100)
+        if (_screenState.value.settings.resolutionPercent == clamped) return
+        updateSettings { it.copy(resolutionPercent = clamped) }
+        if (_screenState.value.selectedMedia != null) {
+            _screenState.update { it.copy(isCurrentStickerSaved = false) }
+            convertSelectedMedia()
+        }
+    }
+
+    fun onMaxDurationSecChanged(durationSec: Int) {
+        val clamped = durationSec.coerceIn(2, 10)
+        if (_screenState.value.settings.maxAnimatedDurationSec == clamped) return
+        updateSettings { it.copy(maxAnimatedDurationSec = clamped) }
+
+        val currentMedia = _screenState.value.selectedMedia ?: return
+        val maxMs = clamped * 1000L
+        if (currentMedia.inputType == MediaInputType.VIDEO) {
+            val newEnd = currentMedia.trimEndMs.coerceAtMost(
+                (currentMedia.trimStartMs + maxMs).coerceAtMost(currentMedia.totalDurationMs)
+            )
+            _screenState.update {
+                it.copy(
+                    selectedMedia = currentMedia.copy(trimEndMs = newEnd),
+                    isCurrentStickerSaved = false
+                )
+            }
+            convertSelectedMedia()
+        } else if (currentMedia.inputType == MediaInputType.ANIMATED_GIF) {
+            _screenState.update { it.copy(isCurrentStickerSaved = false) }
+            convertSelectedMedia()
+        }
+    }
+
+    fun onDefaultFitModeChanged(fitMode: ScaleFitMode) {
+        updateSettings { it.copy(defaultFitMode = fitMode) }
+        if (_screenState.value.selectedMedia != null) {
+            onScaleFitModeChanged(fitMode)
+        }
+    }
+
+    fun onWhatsAppTargetChanged(target: WhatsAppTarget) {
+        updateSettings { it.copy(whatsAppTarget = target) }
+    }
+
+    fun onCustomPublisherChanged(publisher: String) {
+        val sanitized = publisher.take(36)
+        updateSettings { it.copy(customPublisher = sanitized) }
+        if (_screenState.value.selectedMedia != null) {
+            publisherDebounceJob?.cancel()
+            publisherDebounceJob = viewModelScope.launch {
+                delay(450L)
+                _screenState.update { it.copy(isCurrentStickerSaved = false) }
+                convertSelectedMedia()
+            }
+        }
+    }
+
+    fun clearPreviewCache(onCleared: (String) -> Unit) {
+        viewModelScope.launch {
+            val freedBytes = repository.clearPreviewCache()
+            val freedKb = String.format(Locale.US, "%.1f", freedBytes / 1024.0)
+            onCleared(freedKb)
+        }
+    }
+
+    private fun updateSettings(transform: (AppSettings) -> AppSettings) {
+        _screenState.update { state ->
+            val updated = transform(state.settings)
+            settingsRepository.saveSettings(updated)
+            state.copy(settings = updated)
+        }
+    }
+
     fun onSegmentSelected(segment: StickerPackSegment) {
         _screenState.update { state ->
             val preview = state.previewFile
             val targetList = if (segment == StickerPackSegment.STATIC) state.staticPackStickers else state.animatedPackStickers
-            val isCurrentSaved = preview != null && targetList.any {
+            val isCurrentSaved = preview != null && preview.exists() && targetList.any {
                 it.length() == preview.length() && it.readBytes().contentEquals(preview.readBytes())
             }
             state.copy(
@@ -76,7 +173,7 @@ class StickerViewModel(
                 val currentSegment = _screenState.value.selectedSegment
                 val updated = repository.deleteStickerFromLocalPack(file, currentSegment.packId)
                 val currentPreview = _screenState.value.previewFile
-                val isCurrentStillInPack = currentPreview != null && updated.any {
+                val isCurrentStillInPack = currentPreview != null && currentPreview.exists() && updated.any {
                     it.length() == currentPreview.length() && it.readBytes().contentEquals(currentPreview.readBytes())
                 }
                 _screenState.update { state ->
@@ -120,14 +217,16 @@ class StickerViewModel(
             }
 
             try {
-                val mediaInfo = repository.inspectSelectedUri(uri)
+                val currentSettings = _screenState.value.settings
+                val strings = AppStrings.forLanguage(currentSettings.language)
+                val mediaInfo = repository.inspectSelectedUri(uri, currentSettings)
                 val targetSegment = if (mediaInfo.inputType.isAnimated) StickerPackSegment.ANIMATED else StickerPackSegment.STATIC
                 val currentSegment = _screenState.value.selectedSegment
                 val notice = if (targetSegment != currentSegment) {
                     if (targetSegment == StickerPackSegment.ANIMATED) {
-                        "Beralih ke segmen Stiker Gerak. Stiker foto Anda tetap aman tersimpan!"
+                        strings.switchToAnimatedNotice
                     } else {
-                        "Beralih ke segmen Stiker Foto. Stiker gerak Anda tetap aman tersimpan!"
+                        strings.switchToStaticNotice
                     }
                 } else null
 
@@ -175,7 +274,7 @@ class StickerViewModel(
         }
         textDebounceJob?.cancel()
         textDebounceJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(350L) // ponytail: debounce typing to eliminate photo flickering
+            delay(350L) // ponytail: debounce typing to eliminate photo flickering
             convertSelectedMedia()
         }
     }
@@ -183,14 +282,14 @@ class StickerViewModel(
     fun onVideoTrimRangeChanged(startMs: Long, endMs: Long) {
         val current = _screenState.value.selectedMedia ?: return
         if (current.inputType != MediaInputType.VIDEO) return
+        val maxDurationMs = _screenState.value.settings.maxAnimatedDurationMs
 
         val safeStart = startMs.coerceIn(0L, current.totalDurationMs)
         val minEnd = (safeStart + 500L).coerceAtMost(current.totalDurationMs)
         var safeEnd = endMs.coerceIn(minEnd, current.totalDurationMs)
 
-        if (safeEnd - safeStart > StickerConverter.MAX_VIDEO_TRIM_DURATION_MS) {
-            safeEnd = (safeStart + StickerConverter.MAX_VIDEO_TRIM_DURATION_MS)
-                .coerceAtMost(current.totalDurationMs)
+        if (safeEnd - safeStart > maxDurationMs) {
+            safeEnd = (safeStart + maxDurationMs).coerceAtMost(current.totalDurationMs)
         }
 
         _screenState.update { state ->
@@ -258,15 +357,16 @@ class StickerViewModel(
 
     fun convertSelectedMedia() {
         val media = _screenState.value.selectedMedia ?: return
+        val currentSettings = _screenState.value.settings
 
         if (media.inputType == MediaInputType.VIDEO &&
-            media.trimmedDurationMs > StickerConverter.MAX_VIDEO_TRIM_DURATION_MS
+            media.trimmedDurationMs > currentSettings.maxAnimatedDurationMs
         ) {
             _screenState.update {
                 it.copy(
                     conversionState = StickerUiState.Error(
                         title = "Video Too Long",
-                        message = "Please trim the video to 6 seconds or less.",
+                        message = "Please trim the video to ${currentSettings.maxAnimatedDurationSec} seconds or less.",
                         isDurationError = true
                     )
                 )
@@ -286,7 +386,7 @@ class StickerViewModel(
             }
 
             try {
-                val output = repository.convertMediaToSticker(media) { progress, stage ->
+                val output = repository.convertMediaToSticker(media, currentSettings) { progress, stage ->
                     _screenState.update { state ->
                         state.copy(
                             conversionState = StickerUiState.Processing(
@@ -334,6 +434,7 @@ class StickerViewModel(
     fun resetState() {
         activeConversionJob?.cancel()
         textDebounceJob?.cancel()
+        publisherDebounceJob?.cancel()
         _screenState.update {
             it.copy(
                 selectedMedia = null,
