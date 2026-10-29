@@ -20,9 +20,15 @@ import java.nio.charset.StandardCharsets
 class StickerContentProvider : ContentProvider() {
 
     companion object {
-        const val DEFAULT_PACK_ID = "cobalt_custom_pack_01"
-        const val DEFAULT_PACK_NAME = "My Custom Stickers"
+        const val STATIC_PACK_ID = "cobalt_custom_pack_static"
+        const val STATIC_PACK_NAME = "Koleksi Stiker Foto"
+        const val ANIMATED_PACK_ID = "cobalt_custom_pack_animated"
+        const val ANIMATED_PACK_NAME = "Koleksi Stiker Gerak"
         const val DEFAULT_PACK_PUBLISHER = "Sticker Maker"
+
+        // For backwards compatibility
+        const val DEFAULT_PACK_ID = STATIC_PACK_ID
+        const val DEFAULT_PACK_NAME = STATIC_PACK_NAME
 
         const val STICKER_PACK_IDENTIFIER_IN_QUERY = "sticker_pack_identifier"
         const val STICKER_PACK_NAME_IN_QUERY = "sticker_pack_name"
@@ -78,15 +84,6 @@ class StickerContentProvider : ContentProvider() {
     }
 
     private fun buildPackMetadataCursor(uri: Uri): Cursor {
-        val packDir = File(context?.filesDir, "sticker_packs/$DEFAULT_PACK_ID")
-        val versionFile = File(packDir, "version.txt")
-        val dataVersion = if (versionFile.exists()) versionFile.readText().trim().ifEmpty { "1" } else "1"
-
-        val stickerFiles = packDir.listFiles { f ->
-            f.isFile && f.extension.equals("webp", ignoreCase = true) && f.name != "tray_icon.webp"
-        }.orEmpty()
-        val isAnimatedPack = if (stickerFiles.any { isAnimatedWebpFile(it) }) 1 else 0
-
         val columns = arrayOf(
             STICKER_PACK_IDENTIFIER_IN_QUERY,
             STICKER_PACK_NAME_IN_QUERY,
@@ -103,23 +100,54 @@ class StickerContentProvider : ContentProvider() {
             ANIMATED_STICKER_PACK
         )
         val cursor = MatrixCursor(columns)
-        cursor.addRow(
-            arrayOf<Any>(
-                DEFAULT_PACK_ID,
-                DEFAULT_PACK_NAME,
-                DEFAULT_PACK_PUBLISHER,
-                "tray_icon.webp",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                dataVersion,
-                0,
-                isAnimatedPack
+
+        val requestedPackId = if (uriMatcher.match(uri) == METADATA_CODE_FOR_SINGLE_PACK) {
+            uri.lastPathSegment
+        } else {
+            null
+        }
+
+        val packsToQuery = if (requestedPackId != null) {
+            listOf(requestedPackId)
+        } else {
+            listOf(STATIC_PACK_ID, ANIMATED_PACK_ID)
+        }
+
+        for (packId in packsToQuery) {
+            val packDir = File(context?.filesDir, "sticker_packs/$packId")
+            val stickerFiles = packDir.listFiles { f ->
+                f.isFile && f.extension.equals("webp", ignoreCase = true) && f.name != "tray_icon.webp"
+            }.orEmpty()
+
+            // Only expose non-empty packs in the all-packs query to prevent WhatsApp empty pack errors
+            if (stickerFiles.isEmpty() && requestedPackId == null) {
+                continue
+            }
+
+            val versionFile = File(packDir, "version.txt")
+            val dataVersion = if (versionFile.exists()) versionFile.readText().trim().ifEmpty { "1" } else "1"
+            val isAnimated = packId == ANIMATED_PACK_ID || stickerFiles.any { isAnimatedWebpFile(it) }
+            val packName = if (isAnimated) ANIMATED_PACK_NAME else STATIC_PACK_NAME
+
+            cursor.addRow(
+                arrayOf<Any>(
+                    packId,
+                    packName,
+                    DEFAULT_PACK_PUBLISHER,
+                    "tray_icon.webp",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    dataVersion,
+                    0,
+                    if (isAnimated) 1 else 0
+                )
             )
-        )
+        }
+
         context?.contentResolver?.let { cursor.setNotificationUri(it, uri) }
         return cursor
     }

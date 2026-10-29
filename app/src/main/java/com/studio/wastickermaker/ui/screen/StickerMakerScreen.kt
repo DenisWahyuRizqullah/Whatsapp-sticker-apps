@@ -56,8 +56,10 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,11 +80,13 @@ import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
 import com.studio.wastickermaker.data.model.MediaInputType
 import com.studio.wastickermaker.data.model.ScaleFitMode
+import com.studio.wastickermaker.ui.state.StickerPackSegment
 import com.studio.wastickermaker.ui.state.StickerUiState
 import com.studio.wastickermaker.ui.theme.AiryCobaltTokens
 import com.studio.wastickermaker.ui.theme.frostedBentoCard
 import com.studio.wastickermaker.ui.viewmodel.StickerViewModel
 import com.studio.wastickermaker.util.WhatsAppShareHelper
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -91,8 +95,16 @@ fun StickerMakerScreen(
     viewModel: StickerViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val screenState by viewModel.screenState.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
+
+    LaunchedEffect(screenState.segmentSwitchNotice) {
+        screenState.segmentSwitchNotice?.let { notice ->
+            Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+            viewModel.clearSegmentNotice()
+        }
+    }
 
     val coilImageLoader = remember(context) {
         ImageLoader.Builder(context)
@@ -500,8 +512,8 @@ fun StickerMakerScreen(
                     if (!screenState.isCurrentStickerSaved) {
                         Button(
                             onClick = {
-                                viewModel.saveCurrentStickerToPack()
-                                Toast.makeText(context, "Stiker berhasil disimpan ke koleksi!", Toast.LENGTH_SHORT).show()
+                                viewModel.onSaveCurrentStickerClicked()
+                                Toast.makeText(context, "Stiker berhasil disimpan ke ${screenState.selectedSegment.label}!", Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
@@ -515,7 +527,7 @@ fun StickerMakerScreen(
                             Icon(Icons.Outlined.BookmarkAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "+ Simpan ke Koleksi Stiker",
+                                text = "+ Simpan ke ${screenState.selectedSegment.label}",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -537,7 +549,7 @@ fun StickerMakerScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Tersimpan di Koleksi ✓",
+                                text = "Tersimpan di ${screenState.selectedSegment.label} ✓",
                                 color = AiryCobaltTokens.EmeraldPositive,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -548,11 +560,21 @@ fun StickerMakerScreen(
                     // Secondary Button: Tambahkan Koleksi ke WhatsApp
                     OutlinedButton(
                         onClick = {
-                            try {
-                                val intent = WhatsAppShareHelper.createAddStickerPackIntent(context)
-                                addStickerPackLauncher.launch(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
+                            coroutineScope.launch {
+                                if (!screenState.isCurrentStickerSaved) {
+                                    viewModel.saveCurrentStickerToPack()
+                                }
+                                try {
+                                    val segment = screenState.selectedSegment
+                                    val intent = WhatsAppShareHelper.createAddStickerPackIntent(
+                                        context = context,
+                                        packIdentifier = segment.packId,
+                                        packName = segment.packName
+                                    )
+                                    addStickerPackLauncher.launch(intent)
+                                } catch (_: Exception) {
+                                    Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
@@ -562,8 +584,10 @@ fun StickerMakerScreen(
                     ) {
                         Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
+                        val count = screenState.packStickers.size
+                        val label = if (count == 0) "Simpan & Tambahkan ke WhatsApp" else "Tambahkan ${screenState.selectedSegment.label} ($count) ke WhatsApp"
                         Text(
-                            text = "Tambahkan Koleksi (${screenState.packStickers.size}) ke WhatsApp",
+                            text = label,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -616,8 +640,33 @@ fun StickerMakerScreen(
                     }
                 }
 
+                // Segments Tab: Stiker Foto vs Stiker Gerak
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = screenState.selectedSegment == StickerPackSegment.STATIC,
+                        onClick = { viewModel.onSegmentSelected(StickerPackSegment.STATIC) },
+                        label = { Text("Stiker Foto (${screenState.staticPackStickers.size})", fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                            selectedLabelColor = Color.White
+                        )
+                    )
+                    FilterChip(
+                        selected = screenState.selectedSegment == StickerPackSegment.ANIMATED,
+                        onClick = { viewModel.onSegmentSelected(StickerPackSegment.ANIMATED) },
+                        label = { Text("Stiker Gerak (${screenState.animatedPackStickers.size})", fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AiryCobaltTokens.CobaltPrimary,
+                            selectedLabelColor = Color.White
+                        )
+                    )
+                }
+
                 Text(
-                    text = "Kelola stiker yang telah dibuat. Stiker di koleksi ini otomatis masuk ke keyboard WhatsApp.",
+                    text = "Kelola ${screenState.selectedSegment.label.lowercase(Locale.getDefault())}. Stiker di segmen ini otomatis masuk ke keyboard WhatsApp.",
                     color = AiryCobaltTokens.MutedCoolGrey,
                     fontSize = 12.sp
                 )
@@ -678,7 +727,12 @@ fun StickerMakerScreen(
                     Button(
                         onClick = {
                             try {
-                                val intent = WhatsAppShareHelper.createAddStickerPackIntent(context)
+                                val segment = screenState.selectedSegment
+                                val intent = WhatsAppShareHelper.createAddStickerPackIntent(
+                                    context = context,
+                                    packIdentifier = segment.packId,
+                                    packName = segment.packName
+                                )
                                 addStickerPackLauncher.launch(intent)
                             } catch (e: Exception) {
                                 Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
@@ -696,7 +750,7 @@ fun StickerMakerScreen(
                         Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Tambahkan Koleksi (${screenState.packStickers.size}) ke WhatsApp",
+                            text = "Tambahkan ${screenState.selectedSegment.label} (${screenState.packStickers.size}) ke WhatsApp",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -711,7 +765,7 @@ fun StickerMakerScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Belum ada stiker di koleksi.\nBuat stiker pertamamu di atas!",
+                            text = "Belum ada ${screenState.selectedSegment.label.lowercase(Locale.getDefault())} di koleksi.\nBuat stiker pertamamu di atas!",
                             color = AiryCobaltTokens.MutedCoolGrey,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center

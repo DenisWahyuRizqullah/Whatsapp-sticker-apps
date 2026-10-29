@@ -7,8 +7,10 @@ import androidx.lifecycle.viewModelScope
 import com.studio.wastickermaker.data.model.MediaInputType
 import com.studio.wastickermaker.data.model.ScaleFitMode
 import com.studio.wastickermaker.data.repository.StickerRepository
+import com.studio.wastickermaker.ui.state.StickerPackSegment
 import com.studio.wastickermaker.ui.state.StickerScreenState
 import com.studio.wastickermaker.ui.state.StickerUiState
+import com.studio.wastickermaker.util.StickerContentProvider
 import com.studio.wastickermaker.util.StickerConversionException
 import com.studio.wastickermaker.util.StickerConverter
 import java.io.File
@@ -32,37 +34,63 @@ class StickerViewModel(
     private var textDebounceJob: Job? = null
 
     init {
-        loadLocalPack()
+        loadLocalPacks()
     }
 
-    fun loadLocalPack() {
+    fun loadLocalPacks() {
         viewModelScope.launch {
             try {
-                val stickers = repository.getLocalPackStickers()
+                val staticList = repository.getLocalPackStickers(StickerContentProvider.STATIC_PACK_ID)
+                val animatedList = repository.getLocalPackStickers(StickerContentProvider.ANIMATED_PACK_ID)
                 _screenState.update { state ->
                     state.copy(
-                        packStickers = stickers,
-                        savedPackCount = stickers.size
+                        staticPackStickers = staticList,
+                        animatedPackStickers = animatedList
                     )
                 }
             } catch (_: Throwable) {}
         }
     }
 
+    fun onSegmentSelected(segment: StickerPackSegment) {
+        _screenState.update { state ->
+            val preview = state.previewFile
+            val targetList = if (segment == StickerPackSegment.STATIC) state.staticPackStickers else state.animatedPackStickers
+            val isCurrentSaved = preview != null && targetList.any {
+                it.length() == preview.length() && it.readBytes().contentEquals(preview.readBytes())
+            }
+            state.copy(
+                selectedSegment = segment,
+                isCurrentStickerSaved = isCurrentSaved
+            )
+        }
+    }
+
+    fun clearSegmentNotice() {
+        _screenState.update { it.copy(segmentSwitchNotice = null) }
+    }
+
     fun deleteSticker(file: File) {
         viewModelScope.launch {
             try {
-                val updated = repository.deleteStickerFromLocalPack(file)
+                val currentSegment = _screenState.value.selectedSegment
+                val updated = repository.deleteStickerFromLocalPack(file, currentSegment.packId)
                 val currentPreview = _screenState.value.previewFile
                 val isCurrentStillInPack = currentPreview != null && updated.any {
                     it.length() == currentPreview.length() && it.readBytes().contentEquals(currentPreview.readBytes())
                 }
                 _screenState.update { state ->
-                    state.copy(
-                        packStickers = updated,
-                        savedPackCount = updated.size,
-                        isCurrentStickerSaved = if (!isCurrentStillInPack) false else state.isCurrentStickerSaved
-                    )
+                    if (currentSegment == StickerPackSegment.STATIC) {
+                        state.copy(
+                            staticPackStickers = updated,
+                            isCurrentStickerSaved = if (!isCurrentStillInPack) false else state.isCurrentStickerSaved
+                        )
+                    } else {
+                        state.copy(
+                            animatedPackStickers = updated,
+                            isCurrentStickerSaved = if (!isCurrentStillInPack) false else state.isCurrentStickerSaved
+                        )
+                    }
                 }
             } catch (t: Throwable) {
                 _screenState.update { state ->
@@ -93,9 +121,21 @@ class StickerViewModel(
 
             try {
                 val mediaInfo = repository.inspectSelectedUri(uri)
+                val targetSegment = if (mediaInfo.inputType.isAnimated) StickerPackSegment.ANIMATED else StickerPackSegment.STATIC
+                val currentSegment = _screenState.value.selectedSegment
+                val notice = if (targetSegment != currentSegment) {
+                    if (targetSegment == StickerPackSegment.ANIMATED) {
+                        "Beralih ke segmen Stiker Gerak. Stiker foto Anda tetap aman tersimpan!"
+                    } else {
+                        "Beralih ke segmen Stiker Foto. Stiker gerak Anda tetap aman tersimpan!"
+                    }
+                } else null
+
                 _screenState.update {
                     it.copy(
                         selectedMedia = mediaInfo,
+                        selectedSegment = targetSegment,
+                        segmentSwitchNotice = notice,
                         conversionState = StickerUiState.Idle
                     )
                 }
@@ -145,7 +185,6 @@ class StickerViewModel(
         if (current.inputType != MediaInputType.VIDEO) return
 
         val safeStart = startMs.coerceIn(0L, current.totalDurationMs)
-        // ponytail: prevent empty range IllegalArgumentException if video is shorter than 500ms
         val minEnd = (safeStart + 500L).coerceAtMost(current.totalDurationMs)
         var safeEnd = endMs.coerceIn(minEnd, current.totalDurationMs)
 
@@ -175,32 +214,45 @@ class StickerViewModel(
         convertSelectedMedia()
     }
 
-    fun saveCurrentStickerToPack() {
+    suspend fun saveCurrentStickerToPack(): Boolean {
         val currentConversion = _screenState.value.conversionState
-        if (currentConversion !is StickerUiState.Success) return
-        if (_screenState.value.isCurrentStickerSaved) return
+        if (currentConversion !is StickerUiState.Success) return false
+        if (_screenState.value.isCurrentStickerSaved) return true
 
-        viewModelScope.launch {
-            try {
-                val packCount = repository.addStickerToLocalPack(currentConversion.stickerOutput)
-                val packList = repository.getLocalPackStickers()
-                _screenState.update { state ->
-                    state.copy(
-                        packStickers = packList,
-                        savedPackCount = packCount,
-                        isCurrentStickerSaved = true
-                    )
-                }
-            } catch (t: Throwable) {
-                _screenState.update { state ->
-                    state.copy(
-                        conversionState = StickerUiState.Error(
-                            title = "Gagal Menyimpan",
-                            message = t.localizedMessage ?: "Tidak dapat menyimpan stiker."
-                        )
-                    )
-                }
+        return try {
+            val isAnimated = currentConversion.stickerOutput.isAnimated
+            val targetSegment = if (isAnimated) StickerPackSegment.ANIMATED else StickerPackSegment.STATIC
+            val packId = targetSegment.packId
+
+            repository.addStickerToLocalPack(currentConversion.stickerOutput, packId)
+            val staticList = repository.getLocalPackStickers(StickerContentProvider.STATIC_PACK_ID)
+            val animatedList = repository.getLocalPackStickers(StickerContentProvider.ANIMATED_PACK_ID)
+
+            _screenState.update { state ->
+                state.copy(
+                    selectedSegment = targetSegment,
+                    staticPackStickers = staticList,
+                    animatedPackStickers = animatedList,
+                    isCurrentStickerSaved = true
+                )
             }
+            true
+        } catch (t: Throwable) {
+            _screenState.update { state ->
+                state.copy(
+                    conversionState = StickerUiState.Error(
+                        title = "Gagal Menyimpan",
+                        message = t.localizedMessage ?: "Tidak dapat menyimpan stiker."
+                    )
+                )
+            }
+            false
+        }
+    }
+
+    fun onSaveCurrentStickerClicked() {
+        viewModelScope.launch {
+            saveCurrentStickerToPack()
         }
     }
 
@@ -245,7 +297,6 @@ class StickerViewModel(
                     }
                 }
 
-                // ponytail: preview only; committed to pack only when user explicitly saves
                 _screenState.update { state ->
                     state.copy(
                         conversionState = StickerUiState.Success(

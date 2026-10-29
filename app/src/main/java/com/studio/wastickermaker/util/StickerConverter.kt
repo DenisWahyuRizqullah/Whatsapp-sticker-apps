@@ -573,12 +573,13 @@ class StickerConverter(private val context: Context) {
     private fun drawTextOverlayOnCanvas(canvas: Canvas, text: String) {
         if (text.isBlank()) return
 
-        val lines = text.trim().split("\n").filter { it.isNotBlank() }
+        val lines = wrapText(text, maxCharsPerLine = 16)
         if (lines.isEmpty()) return
 
         val baseSize = when {
-            lines.size > 2 -> 30f
-            lines.any { it.length > 18 } -> 34f
+            lines.size >= 4 -> 24f
+            lines.size == 3 -> 30f
+            lines.any { it.length > 14 } -> 34f
             else -> 42f
         }
 
@@ -608,6 +609,30 @@ class StickerConverter(private val context: Context) {
             canvas.drawText(line, centerX, y, strokePaint)
             canvas.drawText(line, centerX, y, fillPaint)
         }
+    }
+
+    private fun wrapText(text: String, maxCharsPerLine: Int): List<String> {
+        val result = mutableListOf<String>()
+        val paragraphs = text.trim().split("\n")
+        for (paragraph in paragraphs) {
+            val words = paragraph.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+            if (words.isEmpty()) continue
+            var currentLine = StringBuilder()
+            for (word in words) {
+                if (currentLine.isEmpty()) {
+                    currentLine.append(word)
+                } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
+                    currentLine.append(" ").append(word)
+                } else {
+                    result.add(currentLine.toString())
+                    currentLine = StringBuilder(word)
+                }
+            }
+            if (currentLine.isNotEmpty()) {
+                result.add(currentLine.toString())
+            }
+        }
+        return result.take(5)
     }
 
     private fun extractVideoDurationMs(uri: Uri): Long {
@@ -652,6 +677,11 @@ class StickerConverter(private val context: Context) {
 
     private fun createOutputWebpFile(prefix: String): File {
         val stickerDir = File(context.cacheDir, STICKER_CACHE_FOLDER).apply { mkdirs() }
+        // ponytail: prune draft previews keeping only the 5 most recent files to prevent cache buildup
+        stickerDir.listFiles { f -> f.extension.equals("webp", ignoreCase = true) }
+            ?.sortedByDescending { it.lastModified() }
+            ?.drop(5)
+            ?.forEach { it.delete() }
         return File(stickerDir, "${prefix}_${System.currentTimeMillis()}.webp")
     }
 }

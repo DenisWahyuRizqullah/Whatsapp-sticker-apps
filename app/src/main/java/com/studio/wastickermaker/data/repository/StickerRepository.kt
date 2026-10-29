@@ -29,6 +29,27 @@ class StickerRepository(
     private val converter: StickerConverter = StickerConverter(context)
 ) {
 
+    init {
+        migrateLegacyPackIfNeeded()
+    }
+
+    private fun migrateLegacyPackIfNeeded() {
+        try {
+            val legacyDir = File(context.filesDir, "sticker_packs/cobalt_custom_pack_01")
+            if (!legacyDir.exists()) return
+
+            val typeMarkerFile = File(legacyDir, "pack_type.txt")
+            val isAnimated = typeMarkerFile.exists() && typeMarkerFile.readText().trim() == "ANIMATED"
+            val targetPackId = if (isAnimated) StickerContentProvider.ANIMATED_PACK_ID else StickerContentProvider.STATIC_PACK_ID
+            val targetDir = File(context.filesDir, "sticker_packs/$targetPackId").apply { mkdirs() }
+
+            legacyDir.listFiles()?.forEach { file ->
+                file.copyTo(File(targetDir, file.name), overwrite = true)
+            }
+            legacyDir.deleteRecursively()
+        } catch (_: Exception) {}
+    }
+
     suspend fun inspectSelectedUri(uri: Uri): SelectedMediaInfo {
         return converter.inspectMediaUri(uri)
     }
@@ -42,19 +63,9 @@ class StickerRepository(
 
     suspend fun addStickerToLocalPack(
         stickerOutput: StickerOutput,
-        packId: String = StickerContentProvider.DEFAULT_PACK_ID
+        packId: String = if (stickerOutput.isAnimated) StickerContentProvider.ANIMATED_PACK_ID else StickerContentProvider.STATIC_PACK_ID
     ): Int = withContext(Dispatchers.IO) {
         val packDir = File(context.filesDir, "sticker_packs/$packId").apply { mkdirs() }
-
-        // WhatsApp forbids mixing static and animated stickers in the same pack.
-        // If switching between static and animated, reset pack files to keep the pack 100% valid.
-        val typeMarkerFile = File(packDir, "pack_type.txt")
-        val currentType = if (stickerOutput.isAnimated) "ANIMATED" else "STATIC"
-        if (typeMarkerFile.exists() && typeMarkerFile.readText().trim() != currentType) {
-            packDir.listFiles { f -> f.extension.equals("webp", ignoreCase = true) && f.name != "tray_icon.webp" }
-                ?.forEach { it.delete() }
-        }
-        typeMarkerFile.writeText(currentType)
 
         updateTrayIconFromSticker(packDir, stickerOutput.file)
 
@@ -111,7 +122,7 @@ class StickerRepository(
     }
 
     suspend fun getLocalPackStickers(
-        packId: String = StickerContentProvider.DEFAULT_PACK_ID
+        packId: String = StickerContentProvider.STATIC_PACK_ID
     ): List<File> = withContext(Dispatchers.IO) {
         val packDir = File(context.filesDir, "sticker_packs/$packId")
         if (!packDir.exists()) return@withContext emptyList()
@@ -122,7 +133,7 @@ class StickerRepository(
 
     suspend fun deleteStickerFromLocalPack(
         targetFile: File,
-        packId: String = StickerContentProvider.DEFAULT_PACK_ID
+        packId: String = StickerContentProvider.STATIC_PACK_ID
     ): List<File> = withContext(Dispatchers.IO) {
         val packDir = File(context.filesDir, "sticker_packs/$packId")
         if (!packDir.exists()) return@withContext emptyList()

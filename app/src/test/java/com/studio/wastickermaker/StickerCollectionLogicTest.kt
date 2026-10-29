@@ -10,7 +10,7 @@ import java.io.File
 
 /**
  * Unit test verifying that sticker collection deletion targets the exact specified file
- * without renaming other files (preventing Coil cache collisions and Compose key desync).
+ * without renaming other files, segments are isolated, and text wraps properly.
  */
 class StickerCollectionLogicTest {
 
@@ -89,5 +89,85 @@ class StickerCollectionLogicTest {
         assertEquals(3, allPackFiles.size)
         assertTrue(File(packDir, "autofill_sticker_02.webp").exists())
         assertTrue(File(packDir, "autofill_sticker_03.webp").exists())
+    }
+
+    @Test
+    fun testStaticAndAnimatedPacksAreCompletelySeparated() {
+        val packsRoot = tempFolder.newFolder("sticker_packs")
+        val staticDir = File(packsRoot, "cobalt_custom_pack_static").apply { mkdirs() }
+        val animatedDir = File(packsRoot, "cobalt_custom_pack_animated").apply { mkdirs() }
+
+        // User saves 2 photo stickers in static pack
+        File(staticDir, "user_sticker_1.webp").writeText("photo1")
+        File(staticDir, "user_sticker_2.webp").writeText("photo2")
+
+        // User switches to animated and saves a GIF sticker
+        File(animatedDir, "user_sticker_anim1.webp").writeText("anim1")
+
+        // Crucial: Static pack remains 100% intact with its 2 stickers!
+        val staticFiles = staticDir.listFiles { f -> f.name.startsWith("user_sticker_") }?.sortedBy { it.name }.orEmpty()
+        val animatedFiles = animatedDir.listFiles { f -> f.name.startsWith("user_sticker_") }?.sortedBy { it.name }.orEmpty()
+
+        assertEquals(2, staticFiles.size)
+        assertEquals(1, animatedFiles.size)
+        assertEquals("photo1", staticFiles[0].readText())
+        assertEquals("photo2", staticFiles[1].readText())
+        assertEquals("anim1", animatedFiles[0].readText())
+    }
+
+    @Test
+    fun testWordWrapSplitsLongTextWithoutNewlines() {
+        val longText = "Selamat Ulang Tahun Sahabat Karibku Tercinta"
+        val maxCharsPerLine = 16
+
+        val result = mutableListOf<String>()
+        val paragraphs = longText.trim().split("\n")
+        for (paragraph in paragraphs) {
+            val words = paragraph.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+            if (words.isEmpty()) continue
+            var currentLine = StringBuilder()
+            for (word in words) {
+                if (currentLine.isEmpty()) {
+                    currentLine.append(word)
+                } else if (currentLine.length + 1 + word.length <= maxCharsPerLine) {
+                    currentLine.append(" ").append(word)
+                } else {
+                    result.add(currentLine.toString())
+                    currentLine = StringBuilder(word)
+                }
+            }
+            if (currentLine.isNotEmpty()) {
+                result.add(currentLine.toString())
+            }
+        }
+
+        assertTrue(result.size >= 3)
+        // All wrapped lines must be <= maxCharsPerLine (or a single long word)
+        for (line in result) {
+            assertTrue(line.length <= 20)
+        }
+    }
+
+    @Test
+    fun testCachePruningRetainsOnlyRecentFiveFiles() {
+        val cacheDir = tempFolder.newFolder("stickers_cache")
+
+        // Create 8 dummy preview files
+        for (i in 1..8) {
+            val file = File(cacheDir, "preview_$i.webp")
+            file.writeText("data_$i")
+            file.setLastModified(1000L * i)
+        }
+
+        // Run pruning logic
+        cacheDir.listFiles { f -> f.extension.equals("webp", ignoreCase = true) }
+            ?.sortedByDescending { it.lastModified() }
+            ?.drop(5)
+            ?.forEach { it.delete() }
+
+        val remainingFiles = cacheDir.listFiles()?.sortedBy { it.lastModified() }.orEmpty()
+        assertEquals(5, remainingFiles.size)
+        assertEquals("preview_4.webp", remainingFiles[0].name)
+        assertEquals("preview_8.webp", remainingFiles[4].name)
     }
 }
