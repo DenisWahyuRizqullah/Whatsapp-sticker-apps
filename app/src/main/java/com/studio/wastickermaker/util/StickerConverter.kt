@@ -465,6 +465,115 @@ class StickerConverter(private val context: Context) {
         return out.toByteArray()
     }
 
+    /**
+     * Generates a 100% transparent 512x512 WebP placeholder (static or animated) so packs with
+     * fewer than 3 user stickers satisfy WhatsApp's minimum-3-stickers rule without duplicating
+     * the user's visible sticker.
+     */
+    fun createTransparentFillerWebp(
+        isAnimated: Boolean,
+        packId: String = if (isAnimated) StickerContentProvider.ANIMATED_PACK_ID else StickerContentProvider.STATIC_PACK_ID,
+        packName: String = if (isAnimated) StickerContentProvider.ANIMATED_PACK_NAME else StickerContentProvider.STATIC_PACK_NAME
+    ): ByteArray {
+        val bitmap = Bitmap.createBitmap(STICKER_DIMENSION_PX, STICKER_DIMENSION_PX, Bitmap.Config.ARGB_8888)
+        bitmap.setHasAlpha(true)
+        bitmap.eraseColor(Color.TRANSPARENT)
+        // Single corner pixel at alpha=1/255 (invisible) forces Android's WebP encoder to emit an alpha channel
+        bitmap.setPixel(0, 0, Color.argb(1, 0, 0, 0))
+
+        val compressFormat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+        } else {
+            @Suppress("DEPRECATION")
+            Bitmap.CompressFormat.WEBP
+        }
+        val baos = ByteArrayOutputStream()
+        bitmap.compress(compressFormat, 80, baos)
+        bitmap.recycle()
+        val rawStaticWebp = baos.toByteArray()
+
+        val baseWebp = if (isAnimated) {
+            buildAnimatedWebpFromSingleFrame(rawStaticWebp)
+        } else {
+            rawStaticWebp
+        }
+        return injectWhatsAppExifChunk(baseWebp, packId = packId, packName = packName)
+    }
+
+    internal fun buildAnimatedWebpFromSingleFrame(
+        singleFrameWebp: ByteArray,
+        frameDurationMs: Int = 100,
+        frameCount: Int = 2
+    ): ByteArray {
+        val frameSubchunks = ByteArrayOutputStream()
+        var offset = 12
+        while (offset + 8 <= singleFrameWebp.size) {
+            val fourCC = String(singleFrameWebp, offset, 4, StandardCharsets.US_ASCII)
+            val chunkSize = ByteBuffer.wrap(singleFrameWebp, offset + 4, 4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .int
+            if (chunkSize < 0) break
+            val paddedDataSize = chunkSize + (chunkSize and 1)
+            val totalChunkBytes = (8 + paddedDataSize).coerceAtMost(singleFrameWebp.size - offset)
+            if (fourCC == "ALPH" || fourCC == "VP8 " || fourCC == "VP8L") {
+                frameSubchunks.write(singleFrameWebp, offset, totalChunkBytes)
+            }
+            offset += totalChunkBytes
+        }
+        val subchunkBytes = frameSubchunks.toByteArray()
+        val anmfPayloadSize = 16 + subchunkBytes.size
+        val anmfHeader = byteArrayOf(
+            0, 0, 0,                   // Frame X = 0
+            0, 0, 0,                   // Frame Y = 0
+            0xFF.toByte(), 0x01, 0x00, // Width - 1 = 511
+            0xFF.toByte(), 0x01, 0x00, // Height - 1 = 511
+            (frameDurationMs and 0xFF).toByte(),
+            ((frameDurationMs shr 8) and 0xFF).toByte(),
+            ((frameDurationMs shr 16) and 0xFF).toByte(),
+            0x02                       // Blending = do not blend (bit 1), Disposal = do not dispose (bit 0)
+        )
+        val anmfSizeBytes = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(anmfPayloadSize).array()
+
+        val bodyStream = ByteArrayOutputStream()
+        // VP8X chunk with Alpha (0x10) | Animation (0x02) flags
+        bodyStream.write(
+            byteArrayOf(
+                'V'.code.toByte(), 'P'.code.toByte(), '8'.code.toByte(), 'X'.code.toByte(),
+                10, 0, 0, 0,
+                0x12, 0, 0, 0,
+                0xFF.toByte(), 0x01, 0x00,
+                0xFF.toByte(), 0x01, 0x00
+            )
+        )
+        // ANIM chunk: transparent background (0,0,0,0) and infinite loop (0)
+        bodyStream.write(
+            byteArrayOf(
+                'A'.code.toByte(), 'N'.code.toByte(), 'I'.code.toByte(), 'M'.code.toByte(),
+                6, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0
+            )
+        )
+        repeat(frameCount.coerceAtLeast(2)) {
+            bodyStream.write("ANMF".toByteArray(StandardCharsets.US_ASCII))
+            bodyStream.write(anmfSizeBytes)
+            bodyStream.write(anmfHeader)
+            bodyStream.write(subchunkBytes)
+            if (anmfPayloadSize % 2 == 1) {
+                bodyStream.write(0)
+            }
+        }
+
+        val webpBody = bodyStream.toByteArray()
+        val riffSize = 4 + webpBody.size
+        val out = ByteArrayOutputStream(8 + riffSize)
+        out.write("RIFF".toByteArray(StandardCharsets.US_ASCII))
+        out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(riffSize).array())
+        out.write("WEBP".toByteArray(StandardCharsets.US_ASCII))
+        out.write(webpBody)
+        return out.toByteArray()
+    }
+
     private fun build512ScaleFilter(fps: Int, fitMode: ScaleFitMode): String {
         return when (fitMode) {
             ScaleFitMode.CENTER_CROP -> {

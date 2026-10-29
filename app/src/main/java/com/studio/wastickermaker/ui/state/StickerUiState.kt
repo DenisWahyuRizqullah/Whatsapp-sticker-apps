@@ -27,7 +27,7 @@ sealed interface StickerUiState {
 
 enum class StickerPackSegment(val label: String, val packId: String, val packName: String) {
     STATIC("Stiker Foto", "cobalt_custom_pack_static", "Koleksi Stiker Foto"),
-    ANIMATED("Stiker Gerak / GIF", "cobalt_custom_pack_animated", "Koleksi Stiker Gerak")
+    ANIMATED("Stiker Gerak", "cobalt_custom_pack_animated", "Koleksi Stiker Gerak")
 }
 
 data class StickerScreenState(

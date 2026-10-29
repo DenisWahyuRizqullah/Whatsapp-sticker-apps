@@ -60,24 +60,30 @@ class StickerCollectionLogicTest {
     }
 
     @Test
-    fun testAutoFillMaintainsThreeStickersForWhatsApp() {
+    fun testAutoFillUsesTransparentPlaceholderInsteadOfDuplicatingUserSticker() {
         val packDir = tempFolder.newFolder("pack_autofill")
+        val transparentFillerBytes = "TRANSPARENT_PLACEHOLDER_WEBP".toByteArray()
 
         // 1 user sticker
-        val stickerA = File(packDir, "user_sticker_2001_aaa.webp").apply { writeText("data_A") }
+        val stickerA = File(packDir, "user_sticker_2001_aaa.webp").apply { writeText("USER_VISIBLE_STICKER_A") }
+
+        // Simulate legacy duplicate autofill on disk from old bug
+        File(packDir, "autofill_sticker_02.webp").writeText("USER_VISIBLE_STICKER_A")
+        File(packDir, "autofill_sticker_03.webp").writeText("USER_VISIBLE_STICKER_A")
 
         val userStickers = packDir.listFiles { f ->
             f.extension.equals("webp", ignoreCase = true) && f.name.startsWith("user_sticker_")
         }?.sortedBy { it.name }.orEmpty()
 
-        // Remove old autofillers
-        packDir.listFiles { f -> f.name.startsWith("autofill_sticker_") }?.forEach { it.delete() }
+        // Heal / populate autofill slots with transparent bytes instead of copying user's sticker
+        val neededNames = ((userStickers.size + 1)..3).map { slot ->
+            String.format("autofill_sticker_%02d.webp", slot)
+        }.toSet()
 
-        // WhatsApp requires 3 stickers
-        if (userStickers.size < 3) {
-            for (slot in (userStickers.size + 1)..3) {
-                val filler = File(packDir, String.format("autofill_sticker_%02d.webp", slot))
-                userStickers.first().copyTo(filler, overwrite = true)
+        for (name in neededNames) {
+            val fillerFile = File(packDir, name)
+            if (!fillerFile.exists() || !fillerFile.readBytes().contentEquals(transparentFillerBytes)) {
+                fillerFile.writeBytes(transparentFillerBytes)
             }
         }
 
@@ -85,10 +91,16 @@ class StickerCollectionLogicTest {
             f.extension.equals("webp", ignoreCase = true)
         }?.sortedBy { it.name }.orEmpty()
 
-        // Total should be 3: 1 user sticker + 2 fillers
+        // Total should be 3: 1 user sticker + 2 transparent fillers (NOT duplicates of stickerA)
         assertEquals(3, allPackFiles.size)
-        assertTrue(File(packDir, "autofill_sticker_02.webp").exists())
-        assertTrue(File(packDir, "autofill_sticker_03.webp").exists())
+        val filler2 = File(packDir, "autofill_sticker_02.webp")
+        val filler3 = File(packDir, "autofill_sticker_03.webp")
+        assertTrue(filler2.exists())
+        assertTrue(filler3.exists())
+        assertFalse(filler2.readBytes().contentEquals(stickerA.readBytes()))
+        assertFalse(filler3.readBytes().contentEquals(stickerA.readBytes()))
+        assertTrue(filler2.readBytes().contentEquals(transparentFillerBytes))
+        assertTrue(filler3.readBytes().contentEquals(transparentFillerBytes))
     }
 
     @Test

@@ -116,7 +116,8 @@ class StickerContentProvider : ContentProvider() {
         for (packId in packsToQuery) {
             val packDir = File(context?.filesDir, "sticker_packs/$packId")
             val stickerFiles = packDir.listFiles { f ->
-                f.isFile && f.extension.equals("webp", ignoreCase = true) && f.name != "tray_icon.webp"
+                f.isFile && f.extension.equals("webp", ignoreCase = true) &&
+                    (f.name.startsWith("user_sticker_") || f.name.startsWith("autofill_sticker_"))
             }.orEmpty()
 
             // Only expose non-empty packs in the all-packs query to prevent WhatsApp empty pack errors
@@ -156,7 +157,8 @@ class StickerContentProvider : ContentProvider() {
         val packId = uri.lastPathSegment ?: DEFAULT_PACK_ID
         val packDir = File(context?.filesDir, "sticker_packs/$packId")
         val webpFiles = packDir.listFiles { file ->
-            file.isFile && file.extension.equals("webp", ignoreCase = true) && file.name != "tray_icon.webp"
+            file.isFile && file.extension.equals("webp", ignoreCase = true) &&
+                (file.name.startsWith("user_sticker_") || file.name.startsWith("autofill_sticker_"))
         }?.sortedWith(compareBy({ !it.name.startsWith("user_sticker_") }, { it.lastModified() }, { it.name })).orEmpty()
 
         val cursor = MatrixCursor(

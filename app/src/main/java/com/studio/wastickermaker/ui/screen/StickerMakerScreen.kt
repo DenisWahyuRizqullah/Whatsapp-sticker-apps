@@ -13,12 +13,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,7 +40,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,7 +60,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +68,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -86,7 +87,6 @@ import com.studio.wastickermaker.ui.theme.AiryCobaltTokens
 import com.studio.wastickermaker.ui.theme.frostedBentoCard
 import com.studio.wastickermaker.ui.viewmodel.StickerViewModel
 import com.studio.wastickermaker.util.WhatsAppShareHelper
-import kotlinx.coroutines.launch
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,7 +95,6 @@ fun StickerMakerScreen(
     viewModel: StickerViewModel = viewModel()
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
     val screenState by viewModel.screenState.collectAsStateWithLifecycle()
     val scrollState = rememberScrollState()
 
@@ -151,7 +150,11 @@ fun StickerMakerScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp)
+                ) {
                     Text(
                         text = "Sticker Maker",
                         color = AiryCobaltTokens.DeepSlateHeading,
@@ -168,7 +171,8 @@ fun StickerMakerScreen(
                 if (screenState.selectedMedia != null) {
                     OutlinedButton(
                         onClick = { viewModel.resetState() },
-                        shape = CircleShape
+                        shape = CircleShape,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Refresh,
@@ -176,7 +180,7 @@ fun StickerMakerScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("New", fontSize = 12.sp)
+                        Text("New", fontSize = 12.sp, maxLines = 1)
                     }
                 }
             }
@@ -200,9 +204,10 @@ fun StickerMakerScreen(
                         containerColor = AiryCobaltTokens.CobaltPrimary,
                         contentColor = Color.White
                     ),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .heightIn(min = 52.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.AddPhotoAlternate,
@@ -213,7 +218,8 @@ fun StickerMakerScreen(
                     Text(
                         text = "Choose Photo, GIF, or Video",
                         fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
                     )
                 }
 
@@ -228,7 +234,12 @@ fun StickerMakerScreen(
                             text = media.displayName,
                             color = AiryCobaltTokens.DeepSlateHeading,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
                         )
                         Surface(
                             shape = CircleShape,
@@ -504,11 +515,8 @@ fun StickerMakerScreen(
                     }
                 }
 
-                // Send to WhatsApp Actions
+                // Save to Sticker Collection Action
                 if (screenState.conversionState is StickerUiState.Success) {
-                    val output = (screenState.conversionState as StickerUiState.Success).stickerOutput
-
-                    // Primary Button: Simpan ke Koleksi Stiker
                     if (!screenState.isCurrentStickerSaved) {
                         Button(
                             onClick = {
@@ -520,16 +528,18 @@ fun StickerMakerScreen(
                                 containerColor = AiryCobaltTokens.CobaltPrimary,
                                 contentColor = Color.White
                             ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(52.dp)
+                                .heightIn(min = 52.dp)
                         ) {
                             Icon(Icons.Outlined.BookmarkAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "+ Simpan ke ${screenState.selectedSegment.label}",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
                             )
                         }
                     } else {
@@ -537,9 +547,10 @@ fun StickerMakerScreen(
                             onClick = { },
                             enabled = false,
                             shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.CheckCircle,
@@ -552,45 +563,10 @@ fun StickerMakerScreen(
                                 text = "Tersimpan di ${screenState.selectedSegment.label} ✓",
                                 color = AiryCobaltTokens.EmeraldPositive,
                                 fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
                             )
                         }
-                    }
-
-                    // Secondary Button: Tambahkan Koleksi ke WhatsApp
-                    OutlinedButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                if (!screenState.isCurrentStickerSaved) {
-                                    viewModel.saveCurrentStickerToPack()
-                                }
-                                try {
-                                    val segment = screenState.selectedSegment
-                                    val intent = WhatsAppShareHelper.createAddStickerPackIntent(
-                                        context = context,
-                                        packIdentifier = segment.packId,
-                                        packName = segment.packName
-                                    )
-                                    addStickerPackLauncher.launch(intent)
-                                } catch (_: Exception) {
-                                    Toast.makeText(context, "Could not open WhatsApp.", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        val count = screenState.packStickers.size
-                        val label = if (count == 0) "Simpan & Tambahkan ke WhatsApp" else "Tambahkan ${screenState.selectedSegment.label} ($count) ke WhatsApp"
-                        Text(
-                            text = label,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
                     }
                 }
             }
@@ -743,16 +719,18 @@ fun StickerMakerScreen(
                             containerColor = AiryCobaltTokens.CobaltPrimary,
                             contentColor = Color.White
                         ),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .heightIn(min = 50.dp)
                     ) {
                         Icon(Icons.Outlined.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Tambahkan ${screenState.selectedSegment.label} (${screenState.packStickers.size}) ke WhatsApp",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center
                         )
                     }
                 } else {
