@@ -17,6 +17,7 @@ import com.studio.wastickermaker.util.StickerContentProvider
 import com.studio.wastickermaker.util.StickerConverter
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -241,7 +242,7 @@ class StickerRepository(
                 }
             } else {
                 val neededNames = ((userStickers.size + 1)..3).map { slot ->
-                    String.format("autofill_sticker_%02d.webp", slot)
+                    String.format(Locale.US, "autofill_sticker_%02d.webp", slot)
                 }.toSet()
 
                 existingFillers.filter { it.name !in neededNames }.forEach {
