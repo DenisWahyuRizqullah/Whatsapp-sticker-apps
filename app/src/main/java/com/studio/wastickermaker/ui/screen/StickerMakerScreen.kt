@@ -2,15 +2,20 @@ package com.studio.wastickermaker.ui.screen
 
 import android.app.Activity
 import android.os.Build
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +48,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Refresh
@@ -64,15 +70,17 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,12 +94,15 @@ import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
+import com.studio.wastickermaker.R
 import com.studio.wastickermaker.data.model.AppLanguage
 import com.studio.wastickermaker.data.model.AppSettings
 import com.studio.wastickermaker.data.model.AppThemeMode
 import com.studio.wastickermaker.data.model.MediaInputType
 import com.studio.wastickermaker.data.model.ScaleFitMode
 import com.studio.wastickermaker.data.model.WhatsAppTarget
+import com.studio.wastickermaker.ui.state.AppNotice
+import com.studio.wastickermaker.ui.state.AppNoticeTone
 import com.studio.wastickermaker.ui.state.StickerPackSegment
 import com.studio.wastickermaker.ui.state.StickerUiState
 import com.studio.wastickermaker.ui.theme.AiryCobaltTokens
@@ -112,35 +123,6 @@ fun StickerMakerScreen(
     val settings = screenState.settings
     val strings = AppStrings.forLanguage(settings.language)
     val scrollState = rememberScrollState()
-
-    LaunchedEffect(screenState.segmentSwitchNotice) {
-        screenState.segmentSwitchNotice?.let { notice ->
-            Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
-            viewModel.clearSegmentNotice()
-        }
-    }
-
-    if (screenState.isSettingsOpen) {
-        BackHandler { viewModel.setSettingsOpen(false) }
-        SettingsScreenContent(
-            settings = settings,
-            strings = strings,
-            onBack = { viewModel.setSettingsOpen(false) },
-            onLanguageSelected = viewModel::onLanguageChanged,
-            onThemeSelected = viewModel::onThemeModeChanged,
-            onResolutionSelected = viewModel::onResolutionPercentChanged,
-            onMaxDurationSelected = viewModel::onMaxDurationSecChanged,
-            onDefaultFitModeSelected = viewModel::onDefaultFitModeChanged,
-            onWhatsAppTargetSelected = viewModel::onWhatsAppTargetChanged,
-            onCustomPublisherChanged = viewModel::onCustomPublisherChanged,
-            onClearCacheClicked = {
-                viewModel.clearPreviewCache { freedKb ->
-                    Toast.makeText(context, strings.cacheClearedToast(freedKb), Toast.LENGTH_SHORT).show()
-                }
-            }
-        )
-        return
-    }
 
     val coilImageLoader = remember(context) {
         ImageLoader.Builder(context)
@@ -165,7 +147,7 @@ fun StickerMakerScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            Toast.makeText(context, strings.packAddedToast, Toast.LENGTH_SHORT).show()
+            viewModel.showNotice(strings.packAddedToast, AppNoticeTone.SUCCESS)
         }
     }
 
@@ -176,35 +158,80 @@ fun StickerMakerScreen(
             .fillMaxSize()
             .background(AiryCobaltTokens.SkyCanvasBrush)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 20.dp, vertical = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            // Top Header with Minimalist Right-Corner Settings Button
+        if (screenState.isSettingsOpen) {
+            BackHandler { viewModel.setSettingsOpen(false) }
+            SettingsScreenContent(
+                settings = settings,
+                strings = strings,
+                onBack = { viewModel.setSettingsOpen(false) },
+                onLanguageSelected = viewModel::onLanguageChanged,
+                onThemeSelected = viewModel::onThemeModeChanged,
+                onResolutionSelected = viewModel::onResolutionPercentChanged,
+                onMaxDurationSelected = viewModel::onMaxDurationSecChanged,
+                onDefaultFitModeSelected = viewModel::onDefaultFitModeChanged,
+                onWhatsAppTargetSelected = viewModel::onWhatsAppTargetChanged,
+                onCustomPublisherChanged = viewModel::onCustomPublisherChanged,
+                onClearCacheClicked = viewModel::clearPreviewCache
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 20.dp, vertical = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+            // Top Header with Brand Logo Mark & Minimalist Right-Corner Settings Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
+                Row(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 12.dp)
+                        .padding(end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = strings.appTitle,
-                        color = AiryCobaltTokens.DeepSlateHeading,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = strings.appSubtitle,
-                        color = AiryCobaltTokens.MutedCoolGrey,
-                        fontSize = 13.sp
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .border(1.dp, AiryCobaltTokens.FrostedCardBorder, RoundedCornerShape(13.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_launcher_background),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                            contentDescription = strings.appTitle,
+                            modifier = Modifier.size(56.dp),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.appTitle,
+                            color = AiryCobaltTokens.DeepSlateHeading,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = strings.appSubtitle,
+                            color = AiryCobaltTokens.MutedCoolGrey,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 Row(
@@ -577,10 +604,7 @@ fun StickerMakerScreen(
                 if (screenState.conversionState is StickerUiState.Success) {
                     if (!screenState.isCurrentStickerSaved) {
                         Button(
-                            onClick = {
-                                viewModel.onSaveCurrentStickerClicked()
-                                Toast.makeText(context, strings.savedToast(currentSegmentLabel), Toast.LENGTH_SHORT).show()
-                            },
+                            onClick = { viewModel.onSaveCurrentStickerClicked() },
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = AiryCobaltTokens.CobaltPrimary,
@@ -738,10 +762,7 @@ fun StickerMakerScreen(
                                 )
 
                                 IconButton(
-                                    onClick = {
-                                        viewModel.deleteSticker(file)
-                                        Toast.makeText(context, strings.deletedToast, Toast.LENGTH_SHORT).show()
-                                    },
+                                    onClick = { viewModel.deleteSticker(file) },
                                     modifier = Modifier
                                         .align(Alignment.TopEnd)
                                         .padding(4.dp)
@@ -771,7 +792,7 @@ fun StickerMakerScreen(
                                 )
                                 addStickerPackLauncher.launch(intent)
                             } catch (_: Exception) {
-                                Toast.makeText(context, strings.whatsAppErrorToast, Toast.LENGTH_SHORT).show()
+                                viewModel.showNotice(strings.whatsAppErrorToast, AppNoticeTone.ERROR)
                             }
                         },
                         shape = RoundedCornerShape(14.dp),
@@ -810,6 +831,77 @@ fun StickerMakerScreen(
                         )
                     }
                 }
+            }
+        }
+        }
+
+        FloatingNoticePill(
+            notice = screenState.activeNotice,
+            onDismiss = viewModel::dismissNotice,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 12.dp, start = 24.dp, end = 24.dp)
+        )
+    }
+}
+
+@Composable
+private fun FloatingNoticePill(
+    notice: AppNotice?,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var lastNotice by remember { mutableStateOf<AppNotice?>(null) }
+    if (notice != null) {
+        lastNotice = notice
+    }
+
+    AnimatedVisibility(
+        visible = notice != null,
+        enter = slideInVertically(initialOffsetY = { -it - 24 }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it - 24 }) + fadeOut(),
+        modifier = modifier
+    ) {
+        val current = lastNotice ?: return@AnimatedVisibility
+        val accentColor = when (current.tone) {
+            AppNoticeTone.SUCCESS -> AiryCobaltTokens.EmeraldPositive
+            AppNoticeTone.ERROR -> AiryCobaltTokens.CoralAlert
+            AppNoticeTone.INFO -> AiryCobaltTokens.CobaltPrimary
+        }
+        val icon = when (current.tone) {
+            AppNoticeTone.SUCCESS -> Icons.Outlined.CheckCircle
+            AppNoticeTone.ERROR -> Icons.Outlined.ErrorOutline
+            AppNoticeTone.INFO -> Icons.Outlined.Info
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = AiryCobaltTokens.FrostedCardSurface,
+            shadowElevation = 6.dp,
+            modifier = Modifier
+                .clip(CircleShape)
+                .border(1.dp, accentColor.copy(alpha = 0.35f), CircleShape)
+                .clickable(onClick = onDismiss)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = current.message,
+                    color = AiryCobaltTokens.DeepSlateHeading,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

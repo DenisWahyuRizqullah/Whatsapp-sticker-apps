@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:pivotX="53"
+        android:pivotY="53.5"
+        android:rotation="-5">
+
+        <!-- Die-Cut Vinyl Outline -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M42,31 L64,31 A11,11 0 0,1 75,42 L75,59.2 L59.2,75 L42,75 A11,11 0 0,1 31,64 L31,42 A11,11 0 0,1 42,31 Z"
+            android:strokeWidth="3.6"
+            android:strokeColor="#FFFFFFFF" />
+
+        <!-- Bauhaus Left Eye -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M43.3,43.6 A2.2,2.2 0 1,1 43.3,48.0 A2.2,2.2 0 1,1 43.3,43.6 Z" />
+
+        <!-- Bauhaus Right Eye (4-Point Sparkle) -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M58.0,40.1 L59.55,43.55 L63.0,45.1 L59.55,46.65 L58.0,50.1 L56.45,46.65 L53.0,45.1 L56.45,43.55 Z" />
+
+        <!-- Expressive Smile Arc -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M44.4,51.8 C46.4,56.0 53.0,55.8 55.2,51.2"
+            android:strokeWidth="2.8"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+
+        <!-- Curled Peel Flap -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M75,59.2 L59.2,75 C59.2,64.5 64.5,59.2 75,59.2 Z" />
+    </group>
+</vector>

@@ -12,6 +12,8 @@ import com.studio.wastickermaker.data.model.ScaleFitMode
 import com.studio.wastickermaker.data.model.WhatsAppTarget
 import com.studio.wastickermaker.data.repository.SettingsRepository
 import com.studio.wastickermaker.data.repository.StickerRepository
+import com.studio.wastickermaker.ui.state.AppNotice
+import com.studio.wastickermaker.ui.state.AppNoticeTone
 import com.studio.wastickermaker.ui.state.StickerPackSegment
 import com.studio.wastickermaker.ui.state.StickerScreenState
 import com.studio.wastickermaker.ui.state.StickerUiState
@@ -43,9 +45,24 @@ class StickerViewModel(
 
     private var activeConversionJob: Job? = null
     private var textDebounceJob: Job? = null
+    private var noticeJob: Job? = null
 
     init {
         loadLocalPacks()
+    }
+
+    fun showNotice(message: String, tone: AppNoticeTone = AppNoticeTone.INFO) {
+        noticeJob?.cancel()
+        _screenState.update { it.copy(activeNotice = AppNotice(message = message, tone = tone)) }
+        noticeJob = viewModelScope.launch {
+            delay(if (tone == AppNoticeTone.ERROR) 2500L else 1700L)
+            _screenState.update { it.copy(activeNotice = null) }
+        }
+    }
+
+    fun dismissNotice() {
+        noticeJob?.cancel()
+        _screenState.update { it.copy(activeNotice = null) }
     }
 
     fun loadLocalPacks() {
@@ -121,11 +138,12 @@ class StickerViewModel(
         updateSettings { it.copy(customPublisher = publisher.take(36)) }
     }
 
-    fun clearPreviewCache(onCleared: (String) -> Unit) {
+    fun clearPreviewCache() {
         viewModelScope.launch {
             val freedBytes = repository.clearPreviewCache(keepFile = _screenState.value.previewFile)
             val freedKb = String.format(Locale.US, "%.1f", freedBytes / 1024.0)
-            onCleared(freedKb)
+            val strings = AppStrings.forLanguage(_screenState.value.settings.language)
+            showNotice(strings.cacheClearedToast(freedKb), AppNoticeTone.SUCCESS)
         }
     }
 
@@ -141,10 +159,6 @@ class StickerViewModel(
             val isSaved = repository.isStickerInPack(_screenState.value.previewFile, segment.packId)
             _screenState.update { it.copy(isCurrentStickerSaved = isSaved) }
         }
-    }
-
-    fun clearSegmentNotice() {
-        _screenState.update { it.copy(segmentSwitchNotice = null) }
     }
 
     fun deleteSticker(file: File) {
@@ -166,6 +180,8 @@ class StickerViewModel(
                         )
                     }
                 }
+                val strings = AppStrings.forLanguage(_screenState.value.settings.language)
+                showNotice(strings.deletedToast, AppNoticeTone.INFO)
             } catch (t: Throwable) {
                 _screenState.update { state ->
                     state.copy(
@@ -199,21 +215,21 @@ class StickerViewModel(
                 val mediaInfo = repository.inspectSelectedUri(uri, currentSettings)
                 val targetSegment = if (mediaInfo.inputType.isAnimated) StickerPackSegment.ANIMATED else StickerPackSegment.STATIC
                 val currentSegment = _screenState.value.selectedSegment
-                val notice = if (targetSegment != currentSegment) {
-                    if (targetSegment == StickerPackSegment.ANIMATED) {
-                        strings.switchToAnimatedNotice
-                    } else {
-                        strings.switchToStaticNotice
-                    }
-                } else null
 
                 _screenState.update {
                     it.copy(
                         selectedMedia = mediaInfo,
                         selectedSegment = targetSegment,
-                        segmentSwitchNotice = notice,
                         conversionState = StickerUiState.Idle
                     )
+                }
+                if (targetSegment != currentSegment) {
+                    val notice = if (targetSegment == StickerPackSegment.ANIMATED) {
+                        strings.switchToAnimatedNotice
+                    } else {
+                        strings.switchToStaticNotice
+                    }
+                    showNotice(notice, AppNoticeTone.INFO)
                 }
                 convertSelectedMedia()
             } catch (e: StickerConversionException) {
@@ -327,7 +343,14 @@ class StickerViewModel(
 
     fun onSaveCurrentStickerClicked() {
         viewModelScope.launch {
-            saveCurrentStickerToPack()
+            if (saveCurrentStickerToPack()) {
+                val state = _screenState.value
+                val strings = AppStrings.forLanguage(state.settings.language)
+                showNotice(
+                    message = strings.savedToast(strings.segmentLabel(state.selectedSegment)),
+                    tone = AppNoticeTone.SUCCESS
+                )
+            }
         }
     }
 

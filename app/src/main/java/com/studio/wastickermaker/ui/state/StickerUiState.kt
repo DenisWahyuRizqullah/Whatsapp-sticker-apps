@@ -30,13 +30,24 @@ enum class StickerPackSegment(val label: String, val packId: String, val packNam
     ANIMATED("Stiker Gerak", "cobalt_custom_pack_animated", "Koleksi Stiker Gerak")
 }
 
+enum class AppNoticeTone {
+    INFO,
+    SUCCESS,
+    ERROR
+}
+
+data class AppNotice(
+    val message: String,
+    val tone: AppNoticeTone = AppNoticeTone.INFO
+)
+
 data class StickerScreenState(
     val selectedMedia: SelectedMediaInfo? = null,
     val conversionState: StickerUiState = StickerUiState.Idle,
     val selectedSegment: StickerPackSegment = StickerPackSegment.STATIC,
     val staticPackStickers: List<File> = emptyList(),
     val animatedPackStickers: List<File> = emptyList(),
-    val segmentSwitchNotice: String? = null,
+    val activeNotice: AppNotice? = null,
     val previewFile: File? = null,
     val isCurrentStickerSaved: Boolean = false,
     val settings: AppSettings = AppSettings(),
